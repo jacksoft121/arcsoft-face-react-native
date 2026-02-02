@@ -1,38 +1,29 @@
-[!] Unknown command: `RnArcFace,`
-Did you mean: cache?
+Pod::Spec.new do |s|
+  s.name         = "RnArcFace"
+  s.version      = "0.1.0"
+  s.summary      = "ArcSoft ArcFace VisionCamera FrameProcessor Plugin"
+  s.license      = { :type => "MIT" }
+  s.author       = { "you" => "you@example.invalid" }
+  s.homepage     = "https://example.invalid"
 
-Usage:
+  # ✅ 必须要有 source，否则 podspec 校验会失败
+  s.source       = { :path => "." }
 
-    $ pod COMMAND
+  s.platforms    = { :ios => "13.0" }
 
-      CocoaPods, the Cocoa library package manager.
+  # ✅ 只包含我们自己的源码文件（不扫 libs/）
+  s.source_files = [
+    "ArcFace*.{h,m,mm}",
+    "engine/**/*.{h,m,mm}",
+    "registry/**/*.{h,m,mm}",
+    "util/**/*.{h,m,mm}"
+  ]
 
-Commands:
+  # ✅ framework 在 ios/libs/
+  s.vendored_frameworks = "libs/ArcSoftFaceEngine.framework"
 
-    + cache         Manipulate the CocoaPods cache
-    + deintegrate   Deintegrate CocoaPods from your project
-    + env           Display pod environment
-    + init          Generate a Podfile for the current directory
-    + install       Install project dependencies according to versions from a
-                    Podfile.lock
-    + ipc           Inter-process communication
-    + lib           Develop pods
-    + list          List pods
-    + outdated      Show outdated project dependencies
-    + plugins       Show available CocoaPods plugins
-    + repo          Manage spec-repositories
-    + search        Search for pods
-    + setup         Set up the CocoaPods environment
-    + spec          Manage pod specs
-    + trunk         Interact with the CocoaPods API (e.g. publishing new specs)
-    + try           Try a Pod!
-    + update        Update outdated project dependencies and create new Podfile.lock
+  s.dependency "React-Core"
+  s.dependency "react-native-vision-camera"
 
-Options:
-
-    --allow-root    Allows CocoaPods to run as root
-    --silent        Show nothing
-    --version       Show the version of the tool
-    --verbose       Show more debugging information
-    --no-ansi       Show output without ANSI codes
-    --help          Show help banner of specified command
+  s.frameworks = ["Foundation", "AVFoundation", "CoreVideo"]
+end
