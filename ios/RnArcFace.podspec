@@ -23,7 +23,7 @@ Pod::Spec.new do |s|
   s.vendored_frameworks = "libs/ArcSoftFaceEngine.framework"
 
   s.dependency "React-Core"
-  s.dependency "react-native-vision-camera"
+  s.dependency "VisionCamera"
 
   s.frameworks = ["Foundation", "AVFoundation", "CoreVideo"]
 end

@@ -1,18 +1,16 @@
 #import <Foundation/Foundation.h>
-#import <ArcSoftFaceEngine/ArcSoftFaceEngine.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class ArcSoftFaceEngine;
+
 @interface ArcFaceEnginePool : NSObject
 
-/// 初始化（内部 dispatch_once，只会做一次）
-+ (void)initEnginesIfNeeded;
+/// 获取 VIDEO 模式引擎（detect/track）
++ (ArcSoftFaceEngine *)detectEngine;
 
-/// 串行使用 VIDEO 引擎（detect/track）
-+ (void)withDetectEngine:(void (^)(ASF_FaceEngine engine))block;
-
-/// 串行使用 IMAGE 引擎（extract / register）
-+ (void)withFeatureEngine:(void (^)(ASF_FaceEngine engine))block;
+/// 获取 IMAGE 模式引擎（extract/register）
++ (ArcSoftFaceEngine *)featureEngine;
 
 @end
 
