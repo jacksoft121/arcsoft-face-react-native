@@ -13,7 +13,7 @@ android {
         versionCode 1
         versionName "1.0"
     }
-    
+
     buildTypes {
         release {
             minifyEnabled false
@@ -40,6 +40,7 @@ repositories {
 
 dependencies {
     implementation 'com.facebook.react:react-native:+'
+    implementation project(":react-native-vision-camera")
     implementation fileTree(dir: 'libs', include: ['*.jar'])
     implementation files('libs/arcsoft_face.jar')
     implementation files('libs/arcsoft_image_util.jar')
