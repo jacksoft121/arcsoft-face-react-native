@@ -123,10 +123,15 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
 
             // 初始化引擎
             Log.d(TAG, "Initializing face engine with features...");
+            int combinedMask = FaceEngine.ASF_FACE_DETECT
+                | FaceEngine.ASF_FACE_RECOGNITION
+                | FaceEngine.ASF_AGE
+                | FaceEngine.ASF_GENDER
+                | FaceEngine.ASF_LIVENESS;
             code = faceEngine.init(reactContext, DetectMode.ASF_DETECT_MODE_IMAGE, 
                 DetectFaceOrientPriority.ASF_OP_0_ONLY,
                 2, // 最大检测人脸数
-                FaceEngine.ASF_FACE_DETECT | FaceEngine.ASF_FACE_RECOGNITION);
+                combinedMask);
 
             if (code != ErrorInfo.MOK) {
                 String errorMsg = getInitErrorMessage(code);
