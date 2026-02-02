@@ -1,52 +1,49 @@
-apply plugin: "com.android.application"
-apply plugin: "org.jetbrains.kotlin.android"
-apply plugin: "com.facebook.react"
-
-def safeExtGet(prop, fallback) {
-    rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+plugins {
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
 }
 
 android {
-    compileSdkVersion safeExtGet('compileSdkVersion', 33)
+    // ✅ 统一 namespace（避免你 zip 里 package 混乱）
+    namespace "com.rnarcface"
+
+    compileSdkVersion 34
 
     defaultConfig {
-        minSdkVersion safeExtGet('minSdkVersion', 21)
-        targetSdkVersion safeExtGet('targetSdkVersion', 33)
-        versionCode 1
-        versionName "1.0"
-    }
+        minSdkVersion 23
+        targetSdkVersion 34
 
-    buildTypes {
-        release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-        }
-    }
-
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        // 你是单人脸第一阶段
+        consumerProguardFiles "consumer-rules.pro"
     }
 
     sourceSets {
         main {
-            jniLibs.srcDirs = ['libs']
+            // ✅ 你应把 so 放到 src/main/jniLibs/<abi>/ 下
+            jniLibs.srcDirs = ['src/main/jniLibs']
+            // ✅ jar 放到 src/main/libs/
+            // （如果你放在 android/libs 也行，但推荐 src/main/libs 更规范）
         }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
     }
 }
 
-repositories {
-    google()
-    mavenCentral()
-}
-
 dependencies {
-    classpath "com.android.tools.build:gradle:8.7.2"
-    classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21"
-    implementation 'com.facebook.react:react-native:+'
-    implementation project(":react-native-vision-camera")
-    implementation fileTree(dir: 'libs', include: ['*.jar'])
-    implementation files('libs/arcsoft_face.jar')
-    implementation files('libs/arcsoft_image_util.jar')
-    implementation 'androidx.appcompat:appcompat:1.4.0'
+    // RN 0.78 组件
+    implementation("com.facebook.react:react-android")
+
+    // VisionCamera 的 FrameProcessorPlugin 类来自 vision-camera
+    // 通常 app 工程已经依赖了 vision-camera，这里用 compileOnly 避免重复打包
+    compileOnly("com.mrousavy.camera:react-native-vision-camera")
+
+    // kotlin stdlib（一般由插件自动带，但显式写更稳）
+    implementation("org.jetbrains.kotlin:kotlin-stdlib")
 }

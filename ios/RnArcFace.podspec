@@ -1,10 +1,38 @@
-Pod::Spec.new do |s|
-  s.name         = "RnArcFace"
-  s.version      = "0.1.0"
-  s.summary      = "ArcSoft ArcFace VisionCamera plugin"
-  s.platforms    = { :ios => "13.0" }
-  s.source_files = "ios/**/*.{h,m,mm}"
-  s.vendored_frameworks = "libs/ArcSoftFaceEngine.framework"
-  s.dependency "react-native-vision-camera"
-  s.dependency "React-Core"
-end
+[!] Unknown command: `RnArcFace,`
+Did you mean: cache?
+
+Usage:
+
+    $ pod COMMAND
+
+      CocoaPods, the Cocoa library package manager.
+
+Commands:
+
+    + cache         Manipulate the CocoaPods cache
+    + deintegrate   Deintegrate CocoaPods from your project
+    + env           Display pod environment
+    + init          Generate a Podfile for the current directory
+    + install       Install project dependencies according to versions from a
+                    Podfile.lock
+    + ipc           Inter-process communication
+    + lib           Develop pods
+    + list          List pods
+    + outdated      Show outdated project dependencies
+    + plugins       Show available CocoaPods plugins
+    + repo          Manage spec-repositories
+    + search        Search for pods
+    + setup         Set up the CocoaPods environment
+    + spec          Manage pod specs
+    + trunk         Interact with the CocoaPods API (e.g. publishing new specs)
+    + try           Try a Pod!
+    + update        Update outdated project dependencies and create new Podfile.lock
+
+Options:
+
+    --allow-root    Allows CocoaPods to run as root
+    --silent        Show nothing
+    --version       Show the version of the tool
+    --verbose       Show more debugging information
+    --no-ansi       Show output without ANSI codes
+    --help          Show help banner of specified command

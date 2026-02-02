@@ -1,76 +1,62 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { useFrameProcessor, useFrameProcessorPlugin } from 'react-native-vision-camera';
-import { runOnJS } from 'react-native-reanimated';
-import type { Frame } from 'react-native-vision-camera';
+import { useEffect, useMemo, useRef } from 'react';
+import { useFrameProcessor } from 'react-native-vision-camera';
+import { useRunOnJS } from 'react-native-worklets-core';
 
-import type {
-    ArcFacePluginResult,
-    ArcFacePluginParams,
-    ArcFaceProcessResult,
-} from './types';
+import { arcFace } from './arcFacePlugin';
+import type { ArcFacePluginResult, ArcFaceProcessResult } from './types';
 import { ArcFaceRegistry } from './ArcFaceRegistry';
 
 type UseArcFaceOptions = {
-    threshold?: number; // default 0.8
-    /** 实时识别结果回调（process_result） */
-    onResult?: (res: ArcFaceProcessResult) => void;
-    /** 注册A完成回调（你可以用来提示 UI） */
-    onRegisteredFromFrame?: (userId: string) => void;
+  threshold?: number; // default 0.8
+  onResult?: (res: ArcFaceProcessResult) => void;
+  onRegisteredFromFrame?: (userId: string) => void;
 };
 
 export function useArcFace(options: UseArcFaceOptions = {}) {
-    const threshold = options.threshold ?? 0.8;
+  const threshold = options.threshold ?? 0.8;
+  const pendingRegisterUserIdRef = useRef<string | null>(null);
 
-    const plugin = useFrameProcessorPlugin('arcFace');
-    const pendingRegisterUserIdRef = useRef<string | null>(null);
+  // 从 worklet 回 JS
+  const onResultJS = useRunOnJS((res: ArcFaceProcessResult) => {
+    options.onResult?.(res);
+  }, [options.onResult]);
 
-    // 进入识别页时：把持久化库加载到 Native 内存（离线可用）
-    useEffect(() => {
-        ArcFaceRegistry.loadAll().catch(() => {});
-    }, []);
+  const onRegisteredJS = useRunOnJS(async (userId: string, featureBase64: string, featureSize: number) => {
+    await ArcFaceRegistry.upsert(userId, featureBase64, featureSize);
+    options.onRegisteredFromFrame?.(userId);
+  }, [options.onRegisteredFromFrame]);
 
-    const requestRegisterFromFrame = useCallback((userId: string) => {
-        pendingRegisterUserIdRef.current = userId;
-    }, []);
+  // 进入识别页：加载 registry 到 native 内存（离线）
+  useEffect(() => {
+    ArcFaceRegistry.loadAll().catch(() => {});
+  }, []);
 
-    const frameProcessor = useFrameProcessor(
-        (frame: Frame) => {
-            'worklet';
-            if (!plugin) return;
+  const requestRegisterFromFrame = (userId: string) => {
+    pendingRegisterUserIdRef.current = userId;
+  };
 
-            const pendingUserId = pendingRegisterUserIdRef.current;
+  const frameProcessor = useFrameProcessor((frame) => {
+    'worklet';
 
-            const params: ArcFacePluginParams = pendingUserId
-                ? { action: 'register_from_frame', userId: pendingUserId }
-                : { action: 'process', threshold };
+    const pending = pendingRegisterUserIdRef.current;
+    const params = pending
+      ? { action: 'register_from_frame' as const, userId: pending }
+      : { action: 'process' as const, threshold };
 
-            const res = plugin.call(frame, params as any) as ArcFacePluginResult | null;
-            if (!res) return;
+    const res = arcFace(frame, params);
+    if (!res) return;
 
-            if (res.type === 'process_result') {
-                if (options.onResult) {
-                    runOnJS(options.onResult)(res);
-                }
-                return;
-            }
+    if (res.type === 'process_result') {
+      onResultJS(res);
+      return;
+    }
 
-            if (res.type === 'register_result') {
-                // 清空 pending
-                pendingRegisterUserIdRef.current = null;
+    if (res.type === 'register_result') {
+      pendingRegisterUserIdRef.current = null;
+      // 写入 registry（native 内存 + 持久化）
+      onRegisteredJS(res.userId, res.featureBase64, res.featureSize);
+    }
+  }, [threshold, onResultJS, onRegisteredJS]);
 
-                // 把特征写入 registry（Native 内存 + debounce 落盘）
-                runOnJS(ArcFaceRegistry.upsert)(res.userId, res.featureBase64, res.featureSize);
-
-                if (options.onRegisteredFromFrame) {
-                    runOnJS(options.onRegisteredFromFrame)(res.userId);
-                }
-            }
-        },
-        [plugin, threshold, options.onResult, options.onRegisteredFromFrame],
-    );
-
-    return {
-        frameProcessor,
-        requestRegisterFromFrame,
-    };
+  return { frameProcessor, requestRegisterFromFrame };
 }
