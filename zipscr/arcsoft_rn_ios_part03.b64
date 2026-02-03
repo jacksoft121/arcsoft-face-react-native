@@ -1,0 +1,120 @@
+UEsDBBQACAgIAJ+AtVIAAAAAAAAAAAAAAAArAAAAYXJjc29mdC1ybi1p
+b3MtZnVsbC9pb3MvU291cmNlL0VuZ2luZS9EZXRlY3RFbmdpbmUubW1V
+VAkAA8l8ZWQJfGVkdXgLAAEE6AMAAAToAwAA
+#import "DetectEngine.h"
+#import <ArcSoftFaceEngine/MFaceEngine.h>
+#import <ArcSoftFaceEngine/asvloffscreen.h>
+#import <ArcSoftFaceEngine/merror.h>
+#import <CoreVideo/CoreVideo.h>
+
+@implementation DetectEngine {
+    MHandle _handle;
+}
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _handle = NULL;
+    }
+    return self;
+}
+
+- (BOOL)initEngine {
+    MRESULT res = MOK;
+
+    res = ASFInitEngine(
+        ASF_DETECT_MODE_VIDEO,
+        ASF_OP_0_ONLY,
+        16,
+        10,
+        ASF_FACE_DETECT | ASF_FACERECOGNITION,
+        &_handle
+    );
+
+    if (res != MOK) {
+        NSLog(@"[ArcSoft] ASFInitEngine failed: %d", res);
+        return NO;
+    }
+    return YES;
+}
+
+- (ASVLOFFSCREEN)offscreenFromPixelBuffer:(CVPixelBufferRef)pixelBuffer {
+    ASVLOFFSCREEN offscreen;
+    memset(&offscreen, 0, sizeof(ASVLOFFSCREEN));
+
+    CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
+
+    size_t width  = CVPixelBufferGetWidth(pixelBuffer);
+    size_t height = CVPixelBufferGetHeight(pixelBuffer);
+    OSType format = CVPixelBufferGetPixelFormatType(pixelBuffer);
+
+    offscreen.i32Width  = (MInt32)width;
+    offscreen.i32Height = (MInt32)height;
+
+    if (format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+        format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) {
+
+        offscreen.u32PixelArrayFormat = ASVL_PAF_NV12;
+
+        offscreen.ppu8Plane[0] = (MUInt8 *)CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0);
+        offscreen.ppu8Plane[1] = (MUInt8 *)CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1);
+
+        offscreen.pi32Pitch[0] = (MInt32)CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0);
+        offscreen.pi32Pitch[1] = (MInt32)CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1);
+    }
+
+    CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
+    return offscreen;
+}
+
+- (NSArray *)detectFaces:(CVPixelBufferRef)pixelBuffer {
+    if (!_handle) return @[];
+
+    ASVLOFFSCREEN offscreen = [self offscreenFromPixelBuffer:pixelBuffer];
+
+    ASF_MultiFaceInfo faceInfo;
+    memset(&faceInfo, 0, sizeof(ASF_MultiFaceInfo));
+
+    MRESULT res = ASFDetectFaces(_handle, &offscreen, &faceInfo);
+    if (res != MOK || faceInfo.faceNum <= 0) {
+        return @[];
+    }
+
+    NSMutableArray *faces = [NSMutableArray array];
+    for (int i = 0; i < faceInfo.faceNum; i++) {
+        CGRect rect = CGRectMake(
+            faceInfo.faceRect[i].left,
+            faceInfo.faceRect[i].top,
+            faceInfo.faceRect[i].right - faceInfo.faceRect[i].left,
+            faceInfo.faceRect[i].bottom - faceInfo.faceRect[i].top
+        );
+        [faces addObject:[NSValue valueWithCGRect:rect]];
+    }
+    return faces;
+}
+
+- (void)dealloc {
+    if (_handle) {
+        ASFUninitEngine(_handle);
+        _handle = NULL;
+    }
+}
+
+@end
+UEsDBBQACAgIAJ+AtVIAAAAAAAAAAAAAAAAsAAAAYXJjc29mdC1ybi1p
+b3MtZnVsbC9pb3MvU291cmNlL0VuZ2luZS9EZXRlY3RFbmdpbmUuaFVT
+CQADyXxlZAl8ZWQdXgLAAEE6AMAAAToAwAA
+#import <Foundation/Foundation.h>
+#import <CoreVideo/CoreVideo.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+@interface DetectEngine : NSObject
+
+- (BOOL)initEngine;
+- (NSArray *)detectFaces:(CVPixelBufferRef)pixelBuffer;
+
+@end
+
+NS_ASSUME_NONNULL_END
+UEsFBgAAAAACAAIAbAAAAC0CAAAAAA==
