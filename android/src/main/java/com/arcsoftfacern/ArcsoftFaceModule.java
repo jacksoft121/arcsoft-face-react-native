@@ -1,20 +1,17 @@
 package com.arcsoftfacern;
 
-import com.arcsoft.face.FaceFeature;
-import com.arcsoft.face.FaceInfo;
+import com.arcsoft.face.*;
 import com.facebook.react.bridge.*;
-
-import android.content.Context;
-
-import java.util.List;
+import android.util.Base64;
+import java.util.*;
 
 public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
 
-  private final ArcsoftEngineManager engineManager;
+  private final ArcsoftEngineManager manager = new ArcsoftEngineManager();
+  private final ArcsoftFaceDB db = new ArcsoftFaceDB();
 
-  public ArcsoftFaceModule(ReactApplicationContext reactContext) {
-    super(reactContext);
-    engineManager = new ArcsoftEngineManager();
+  public ArcsoftFaceModule(ReactApplicationContext ctx) {
+    super(ctx);
   }
 
   @Override
@@ -23,68 +20,79 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
   }
 
   @ReactMethod
-  public void init(Promise promise) {
-    int code = engineManager.init(getReactApplicationContext());
-    if (code == 0) {
-      promise.resolve(true);
-    } else {
-      promise.reject("INIT_FAILED", "ArcSoft init failed: " + code);
-    }
+  public void activate(String appId, String sdkKey, Promise p) {
+    int code = FaceEngine.activeOnline(getReactApplicationContext(), appId, sdkKey);
+    if (code == 0 || code == 90114) p.resolve(true);
+    else p.reject("ACTIVATE_FAILED", String.valueOf(code));
+  }
+
+  @ReactMethod
+  public void init(Promise p) {
+    int code = manager.init(getReactApplicationContext());
+    if (code == 0) p.resolve(true);
+    else p.reject("INIT_FAILED", String.valueOf(code));
   }
 
   @ReactMethod
   public void release() {
-    engineManager.release();
+    manager.release();
   }
 
-  /**
-   * 人脸检测（返回人脸数量）
-   */
   @ReactMethod
-  public void detect(
-          ReadableArray nv21,
-          int width,
-          int height,
-          Promise promise
-  ) {
-    byte[] data = new byte[nv21.size()];
-    for (int i = 0; i < nv21.size(); i++) {
-      data[i] = (byte) nv21.getInt(i);
+  public void detect(String base64, int w, int h, ReadableMap opt, Promise p) {
+    byte[] nv21 = Base64.decode(base64, Base64.DEFAULT);
+    List<FaceInfo> faces = manager.detectFaces(nv21, w, h);
+
+    WritableArray arr = Arguments.createArray();
+    for (FaceInfo f : faces) {
+      WritableMap m = Arguments.createMap();
+      m.putInt("left", f.getRect().left);
+      m.putInt("top", f.getRect().top);
+      m.putInt("right", f.getRect().right);
+      m.putInt("bottom", f.getRect().bottom);
+      arr.pushMap(m);
     }
-
-    List<FaceInfo> faces = engineManager.detectFaces(data, width, height);
-    promise.resolve(faces.size());
+    p.resolve(arr);
   }
 
-  /**
-   * 特征比对（示例：传两张 NV21）
-   */
   @ReactMethod
-  public void compare(
-          ReadableArray nv21a,
-          ReadableArray nv21b,
-          int width,
-          int height,
-          Promise promise
-  ) {
-    byte[] a = new byte[nv21a.size()];
-    byte[] b = new byte[nv21b.size()];
-
-    for (int i = 0; i < a.length; i++) a[i] = (byte) nv21a.getInt(i);
-    for (int i = 0; i < b.length; i++) b[i] = (byte) nv21b.getInt(i);
-
-    List<FaceInfo> fa = engineManager.detectFaces(a, width, height);
-    List<FaceInfo> fb = engineManager.detectFaces(b, width, height);
-
-    if (fa.isEmpty() || fb.isEmpty()) {
-      promise.resolve(0);
+  public void extractFeature(String base64, int w, int h, int idx, Promise p) {
+    byte[] nv21 = Base64.decode(base64, Base64.DEFAULT);
+    List<FaceInfo> faces = manager.detectFaces(nv21, w, h);
+    if (faces.isEmpty()) {
+      p.resolve(null);
       return;
     }
+    FaceFeature f = manager.extract(nv21, w, h, faces.get(idx));
+    String out = Base64.encodeToString(f.getFeatureData(), Base64.NO_WRAP);
+    WritableMap m = Arguments.createMap();
+    m.putString("data", out);
+    p.resolve(m);
+  }
 
-    FaceFeature f1 = engineManager.extractFeature(a, width, height, fa.get(0));
-    FaceFeature f2 = engineManager.extractFeature(b, width, height, fb.get(0));
+  @ReactMethod
+  public void compareFeature(String f1, String f2, Promise p) {
+    FaceFeature a = new FaceFeature();
+    FaceFeature b = new FaceFeature();
+    a.setFeatureData(Base64.decode(f1, Base64.DEFAULT));
+    b.setFeatureData(Base64.decode(f2, Base64.DEFAULT));
+    p.resolve(manager.compare(a, b));
+  }
 
-    float score = engineManager.compare(f1, f2);
-    promise.resolve(score);
+  @ReactMethod
+  public void registerFace(String name, String f, Promise p) {
+    db.put(name, f);
+    p.resolve(true);
+  }
+
+  @ReactMethod
+  public void removeFace(String name, Promise p) {
+    db.remove(name);
+    p.resolve(true);
+  }
+
+  @ReactMethod
+  public void searchFace(String f, int topN, Promise p) {
+    p.resolve(db.search(f, topN));
   }
 }
