@@ -22,5 +22,10 @@
   "peerDependencies": {
     "react": "*",
     "react-native": "*"
-  }
+  },
+  "author": "Jack Xu <jack.xu@inspireglobal.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/inspireglobal/react-native-nitro-inspire-face#readme",
+   "summary":"React Native ArcSoft Face SDK",
+   "description":"React Native ArcSoft Face SDK for Android and iOS"
 }
