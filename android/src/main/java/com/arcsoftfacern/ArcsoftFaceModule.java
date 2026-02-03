@@ -1,16 +1,13 @@
-package com.arcsoft.rn;
+package com.arcsoftfacern;
 
+import com.arcsoft.face.FaceFeature;
+import com.arcsoft.face.FaceInfo;
 import com.facebook.react.bridge.*;
 
-import android.util.Base64;
-
-import com.arcsoft.face.*;
+import android.content.Context;
 
 import java.util.List;
 
-/**
- * ✅ RN 唯一出口
- */
 public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
 
   private final ArcsoftEngineManager engineManager;
@@ -22,69 +19,72 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
 
   @Override
   public String getName() {
-    return "ArcSoftFace";
+    return "ArcsoftFace";
   }
 
-  /** SDK 激活 */
-  @ReactMethod
-  public void activate(String appId, String sdkKey, Promise promise) {
-    int code = engineManager.activate(getReactApplicationContext(), appId, sdkKey);
-    promise.resolve(code);
-  }
-
-  /** 初始化 */
   @ReactMethod
   public void init(Promise promise) {
     int code = engineManager.init(getReactApplicationContext());
-    promise.resolve(code);
-  }
-
-  /** 人脸检测 */
-  @ReactMethod
-  public void detectFaces(String nv21Base64, int width, int height, Promise promise) {
-    byte[] nv21 = Base64.decode(nv21Base64, Base64.DEFAULT);
-
-    List<FaceInfo> faces = engineManager.detectFaces(nv21, width, height);
-
-    WritableArray arr = Arguments.createArray();
-    for (FaceInfo f : faces) {
-      WritableMap m = Arguments.createMap();
-      m.putInt("left", f.getRect().left);
-      m.putInt("top", f.getRect().top);
-      m.putInt("right", f.getRect().right);
-      m.putInt("bottom", f.getRect().bottom);
-      m.putInt("orient", f.getOrient());
-      arr.pushMap(m);
+    if (code == 0) {
+      promise.resolve(true);
+    } else {
+      promise.reject("INIT_FAILED", "ArcSoft init failed: " + code);
     }
-
-    promise.resolve(arr);
   }
 
-  /** 特征提取 */
   @ReactMethod
-  public void extractFeature(
-          String nv21Base64,
+  public void release() {
+    engineManager.release();
+  }
+
+  /**
+   * 人脸检测（返回人脸数量）
+   */
+  @ReactMethod
+  public void detect(
+          ReadableArray nv21,
           int width,
           int height,
-          int faceIndex,
           Promise promise
   ) {
-    byte[] nv21 = Base64.decode(nv21Base64, Base64.DEFAULT);
+    byte[] data = new byte[nv21.size()];
+    for (int i = 0; i < nv21.size(); i++) {
+      data[i] = (byte) nv21.getInt(i);
+    }
 
-    List<FaceInfo> faces = engineManager.detectFaces(nv21, width, height);
-    FaceFeature feature = engineManager.extractFeature(
-            nv21,
-            width,
-            height,
-            faces.get(faceIndex)
-    );
+    List<FaceInfo> faces = engineManager.detectFaces(data, width, height);
+    promise.resolve(faces.size());
+  }
 
-    WritableMap res = Arguments.createMap();
-    res.putString(
-            "feature",
-            Base64.encodeToString(feature.getFeatureData(), Base64.NO_WRAP)
-    );
+  /**
+   * 特征比对（示例：传两张 NV21）
+   */
+  @ReactMethod
+  public void compare(
+          ReadableArray nv21a,
+          ReadableArray nv21b,
+          int width,
+          int height,
+          Promise promise
+  ) {
+    byte[] a = new byte[nv21a.size()];
+    byte[] b = new byte[nv21b.size()];
 
-    promise.resolve(res);
+    for (int i = 0; i < a.length; i++) a[i] = (byte) nv21a.getInt(i);
+    for (int i = 0; i < b.length; i++) b[i] = (byte) nv21b.getInt(i);
+
+    List<FaceInfo> fa = engineManager.detectFaces(a, width, height);
+    List<FaceInfo> fb = engineManager.detectFaces(b, width, height);
+
+    if (fa.isEmpty() || fb.isEmpty()) {
+      promise.resolve(0);
+      return;
+    }
+
+    FaceFeature f1 = engineManager.extractFeature(a, width, height, fa.get(0));
+    FaceFeature f2 = engineManager.extractFeature(b, width, height, fb.get(0));
+
+    float score = engineManager.compare(f1, f2);
+    promise.resolve(score);
   }
 }
