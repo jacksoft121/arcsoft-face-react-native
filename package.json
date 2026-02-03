@@ -1,28 +1,26 @@
 {
   "name": "arcsoft-face-react-native",
   "version": "0.1.0",
-  "main": "lib/commonjs/index.js",
-  "module": "lib/module/index.js",
-  "types": "lib/typescript/index.d.ts",
+  "main": "dist/commonjs/index.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/types/index.d.ts",
   "react-native": "src/index.ts",
-  "source": "src/index.ts",
   "files": [
     "src",
     "ios",
-    "react-native.config.js",
-    "package.json",
-    "README.md"
+    "android",
+    "README.md",
+    "DOCS"
+  ],
+  "keywords": [
+    "react-native",
+    "arcsoft",
+    "arcface",
+    "face",
+    "liveness"
   ],
   "peerDependencies": {
     "react": "*",
-    "react-native": ">=0.72"
-  },
-  "codegenConfig": {
-    "name": "ArcFaceSpec",
-    "type": "modules",
-    "jsSrcsDir": "src",
-    "android": {
-      "javaPackageName": "com.arcsoftface"
-    }
+    "react-native": "*"
   }
 }
