@@ -21,7 +21,7 @@ Pod::Spec.new do |s|
 
   # 如果你有 codegen / TurboModule：
   if new_arch_enabled
-    s.dependency "React-Codegen"
+    s.dependency "ReactCodegen"
     s.pod_target_xcconfig = {
       "CLANG_CXX_LANGUAGE_STANDARD" => "c++20",
       "HEADER_SEARCH_PATHS" => "\"$(PODS_ROOT)/Headers/Public/React-Codegen\" \"$(PODS_ROOT)/Headers/Public/ReactCommon\""
