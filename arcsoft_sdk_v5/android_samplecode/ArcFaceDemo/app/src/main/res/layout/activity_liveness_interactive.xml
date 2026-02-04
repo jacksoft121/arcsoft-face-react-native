@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout>
+
+    <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+        android:id="@+id/ll_root_view"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@color/color_black">
+
+        <TextureView
+            android:id="@+id/camera_texture_preview_rgb"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <com.arcsoft.arcfacedemo.widget.FaceRectView
+            android:id="@+id/camera_face_rect_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <TextView
+            android:id="@+id/tv_select_tip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerHorizontal="true"
+            android:layout_marginTop="20dp"
+            android:textSize="16sp"
+            android:textColor="#ffff00"
+            android:text="选择一组动作"/>
+
+        <CheckBox
+            android:id="@+id/cb_blink"
+            android:layout_below="@id/tv_select_tip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:textSize="14sp"
+            android:textColor="#ffff00"
+            android:text="眨眼"/>
+
+        <CheckBox
+            android:id="@+id/cb_mouth_open"
+            android:layout_below="@id/tv_select_tip"
+            android:layout_toEndOf="@id/cb_blink"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:textSize="14sp"
+            android:textColor="#ffff00"
+            android:text="张嘴"/>
+
+        <CheckBox
+            android:id="@+id/cb_head_left"
+            android:layout_below="@id/tv_select_tip"
+            android:layout_toEndOf="@id/cb_mouth_open"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:textSize="14sp"
+            android:textColor="#ffff00"
+            android:text="左摇头"/>
+
+        <CheckBox
+            android:id="@+id/cb_head_right"
+            android:layout_below="@id/tv_select_tip"
+            android:layout_toEndOf="@id/cb_head_left"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:textSize="14sp"
+            android:textColor="#ffff00"
+            android:text="右摇头"/>
+
+        <Button
+            android:id="@+id/btn_select_confirm"
+            android:layout_below="@id/cb_head_right"
+            android:layout_centerHorizontal="true"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:textSize="16sp"
+            android:text="确认"/>
+
+        <TextView
+            android:id="@+id/tv_liveness_tip"
+            android:layout_below="@id/btn_select_confirm"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerHorizontal="true"
+            android:layout_marginTop="20dp"
+            android:textSize="16sp"
+            android:textColor="#ffff00"/>
+    </RelativeLayout>
+</layout>

@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.XIB" version="3.0" toolsVersion="23727" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" useTraitCollections="YES" colorMatched="YES">
+    <device id="retina4_7" orientation="portrait" appearance="light"/>
+    <dependencies>
+        <deployment identifier="iOS"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="23721"/>
+        <capability name="System colors in document resources" minToolsVersion="11.0"/>
+        <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+    </dependencies>
+    <objects>
+        <placeholder placeholderIdentifier="IBFilesOwner" id="-1" userLabel="File's Owner" customClass="ScreenFlashCheckController">
+            <connections>
+                <outlet property="actionLivenessCheck" destination="r3X-jN-j7I" id="ugG-YF-g2P"/>
+                <outlet property="backBtn" destination="hZu-zw-TzN" id="Qri-iC-Ay1"/>
+                <outlet property="flashLivenessCheck" destination="sB9-KZ-Nyg" id="ZaC-zF-WAl"/>
+                <outlet property="metalView" destination="zWm-hT-tLO" id="ot7-DN-TgN"/>
+                <outlet property="view" destination="iN0-l3-epB" id="wRZ-bd-09L"/>
+            </connections>
+        </placeholder>
+        <placeholder placeholderIdentifier="IBFirstResponder" id="-2" customClass="UIResponder"/>
+        <view contentMode="scaleToFill" id="iN0-l3-epB">
+            <rect key="frame" x="0.0" y="0.0" width="375" height="667"/>
+            <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+            <subviews>
+                <view contentMode="scaleToFill" id="zWm-hT-tLO" customClass="MetalView">
+                    <rect key="frame" x="0.0" y="0.0" width="393" height="460"/>
+                    <autoresizingMask key="autoresizingMask"/>
+                    <color key="backgroundColor" systemColor="systemBackgroundColor"/>
+                </view>
+                <button opaque="NO" contentMode="scaleToFill" fixedFrame="YES" contentHorizontalAlignment="center" contentVerticalAlignment="center" buttonType="system" lineBreakMode="middleTruncation" translatesAutoresizingMaskIntoConstraints="NO" id="r3X-jN-j7I">
+                    <rect key="frame" x="99.5" y="532.5" width="176" height="34.5"/>
+                    <autoresizingMask key="autoresizingMask"/>
+                    <state key="normal" title="Button"/>
+                    <buttonConfiguration key="configuration" style="plain" title="开始交互式活体检测"/>
+                    <connections>
+                        <action selector="actionLivenessDeal:" destination="-1" eventType="touchUpInside" id="ph8-w2-VT3"/>
+                    </connections>
+                </button>
+                <button opaque="NO" contentMode="scaleToFill" fixedFrame="YES" contentHorizontalAlignment="center" contentVerticalAlignment="center" buttonType="system" lineBreakMode="middleTruncation" translatesAutoresizingMaskIntoConstraints="NO" id="sB9-KZ-Nyg">
+                    <rect key="frame" x="108" y="467.5" width="159" height="35"/>
+                    <autoresizingMask key="autoresizingMask"/>
+                    <state key="normal" title="Button"/>
+                    <buttonConfiguration key="configuration" style="plain" title="开始炫光活体检测"/>
+                    <connections>
+                        <action selector="screenFlashLivenessDeal:" destination="-1" eventType="touchUpInside" id="soC-wH-E43"/>
+                    </connections>
+                </button>
+                <button opaque="NO" contentMode="scaleToFill" fixedFrame="YES" contentHorizontalAlignment="center" contentVerticalAlignment="center" buttonType="system" lineBreakMode="middleTruncation" translatesAutoresizingMaskIntoConstraints="NO" id="hZu-zw-TzN">
+                    <rect key="frame" x="159" y="316" width="58" height="35"/>
+                    <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMaxY="YES"/>
+                    <state key="normal" title="Button"/>
+                    <buttonConfiguration key="configuration" style="plain" title="返回"/>
+                    <connections>
+                        <action selector="cancel:" destination="-1" eventType="touchUpInside" id="BYR-3Q-kD3"/>
+                    </connections>
+                </button>
+            </subviews>
+            <color key="backgroundColor" systemColor="systemBackgroundColor"/>
+            <point key="canvasLocation" x="60" y="20.239880059970016"/>
+        </view>
+    </objects>
+    <resources>
+        <systemColor name="systemBackgroundColor">
+            <color white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+        </systemColor>
+    </resources>
+</document>
