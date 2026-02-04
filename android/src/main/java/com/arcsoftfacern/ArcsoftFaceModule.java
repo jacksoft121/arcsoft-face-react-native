@@ -1,29 +1,30 @@
 package com.arcsoftfacern;
 
+import android.util.Base64;
+
+import com.arcsoft.face.ActiveFileInfo;
+import com.arcsoft.face.FaceFeature;
+import com.arcsoft.face.FaceFeatureInfo;
+import com.arcsoft.face.FaceInfo;
+import com.arcsoft.face.SearchResult;
+import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.ReadableArray;
-import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
 
-import com.arcsoft.face.FaceInfo;
-import com.arcsoft.face.FaceFeature;
-import com.arcsoft.face.SearchResult;
-
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * React Native Bridge: ArcsoftFace
- *
- * 逐行对照 ArcSoft Android Demo (Java API)：
- * - FaceEngine.activeOnline
- * - FaceEngine.init/unInit
- * - detectFaces/extractFaceFeature/compareFaceFeature
- * - process/getAgeInfo/getGenderInfo/getLiveness
- * - registerFaceFeature/searchFaceFeature
+ * 说明：
+ * - 只依赖你提供的 arcsoft_face.jar API
+ * - 统一 TS 侧用 base64 传 FaceFeature（2056 bytes）
+ * - detect 返回 FaceInfo 列表（rect/orient/faceId）
  */
 public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
 
@@ -39,111 +40,181 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     return "ArcsoftFace";
   }
 
-  @ReactMethod
-  public void activateOnline(String appId, String sdkKey, Promise promise) {
-    int code = engineManager.activateOnline(getReactApplicationContext(), appId, sdkKey);
-    if (code == 0) {
-      promise.resolve(true);
-    } else {
-      promise.reject("ACTIVATE_FAILED", "ArcSoft activateOnline failed: " + code);
+  private static byte[] readableArrayToBytes(ReadableArray arr) {
+    byte[] data = new byte[arr.size()];
+    for (int i = 0; i < arr.size(); i++) {
+      // RN ReadableArray 没有 byte，通常是 int(0~255)
+      data[i] = (byte) (arr.getInt(i) & 0xFF);
     }
+    return data;
   }
 
-  @ReactMethod
-  public void initEngine(Promise promise) {
-    int code = engineManager.init(getReactApplicationContext());
-    if (code == 0) {
-      promise.resolve(true);
-    } else {
-      promise.reject("INIT_FAILED", "ArcSoft init failed: " + code);
+  private static WritableMap faceInfoToMap(FaceInfo fi) {
+    WritableMap m = Arguments.createMap();
+    if (fi == null) return m;
+    m.putInt("faceId", fi.getFaceId());
+    m.putInt("orient", fi.getOrient());
+
+    WritableMap rect = Arguments.createMap();
+    if (fi.getRect() != null) {
+      rect.putInt("left", fi.getRect().left);
+      rect.putInt("top", fi.getRect().top);
+      rect.putInt("right", fi.getRect().right);
+      rect.putInt("bottom", fi.getRect().bottom);
     }
+    m.putMap("rect", rect);
+    return m;
+  }
+
+  // ===== SDK 注册/激活 =====
+  @ReactMethod
+  public void activeOnline(String appId, String sdkKey, Promise promise) {
+    int code = ArcsoftEngineManager.activeOnline(getReactApplicationContext(), appId, sdkKey);
+    promise.resolve(code);
   }
 
   @ReactMethod
-  public void unInitEngine() {
-    engineManager.release();
-  }
-
-  @ReactMethod
-  public void detectFaces(ReadableArray bytes, int width, int height, String format, Promise promise) {
-    byte[] nv21 = toByteArray(bytes);
-    List<FaceInfo> faces = engineManager.detectFaces(nv21, width, height);
-
-    WritableArray out = Arguments.createArray();
-    for (FaceInfo f : faces) {
-      WritableMap m = Arguments.createMap();
-      WritableMap rect = Arguments.createMap();
-      rect.putInt("left", f.getRect().left);
-      rect.putInt("top", f.getRect().top);
-      rect.putInt("right", f.getRect().right);
-      rect.putInt("bottom", f.getRect().bottom);
-      m.putMap("rect", rect);
-      m.putInt("orient", f.getOrient());
-      out.pushMap(m);
-    }
-
-    WritableMap res = Arguments.createMap();
-    res.putArray("faces", out);
-    promise.resolve(res);
-  }
-
-  @ReactMethod
-  public void extractFeature(ReadableArray bytes, int width, int height, ReadableMap faceInfo, Promise promise) {
-    // 为了 TS 统一，这里允许 JS 传入 faceInfo（rect+orient）
-    byte[] nv21 = toByteArray(bytes);
-    FaceInfo fi = ArcsoftRNConverters.faceInfoFromJS(faceInfo);
-    FaceFeature feature = engineManager.extractFeature(nv21, width, height, fi);
-    if (feature == null) {
+  public void getActiveFileInfo(Promise promise) {
+    ActiveFileInfo info = ArcsoftEngineManager.getActiveFileInfo(getReactApplicationContext());
+    if (info == null) {
       promise.resolve(null);
       return;
     }
     WritableMap m = Arguments.createMap();
-    m.putString("bytesBase64", android.util.Base64.encodeToString(feature.getFeatureData(), android.util.Base64.NO_WRAP));
+    m.putString("appId", info.getAppId());
+    m.putString("sdkKey", info.getSdkKey());
+    m.putString("platform", info.getPlatform());
+    m.putString("sdkType", info.getSdkType());
+    m.putString("sdkVersion", info.getSdkVersion());
+    m.putString("fileVersion", info.getFileVersion());
+    m.putString("startTime", info.getStartTime());
+    m.putString("endTime", info.getEndTime());
     promise.resolve(m);
   }
 
+  // ===== Engine init/release =====
   @ReactMethod
-  public void compareFeature(String featureABytesBase64, String featureBBytesBase64, Promise promise) {
+  public void init(Promise promise) {
+    int mask =
+            com.arcsoft.face.FaceEngine.ASF_FACE_DETECT
+                    | com.arcsoft.face.FaceEngine.ASF_FACE_RECOGNITION
+                    | com.arcsoft.face.FaceEngine.ASF_AGE
+                    | com.arcsoft.face.FaceEngine.ASF_GENDER
+                    | com.arcsoft.face.FaceEngine.ASF_LIVENESS;
+
+    int code = engineManager.init(getReactApplicationContext(), mask, 10);
+    if (code == 0) promise.resolve(true);
+    else promise.reject("INIT_FAILED", "ArcSoft init failed: " + code);
+  }
+
+  @ReactMethod
+  public void release() {
+    engineManager.release();
+  }
+
+  // ===== Detect / Feature / Compare =====
+  @ReactMethod
+  public void detect(ReadableArray nv21, int width, int height, Promise promise) {
+    byte[] data = readableArrayToBytes(nv21);
+    List<FaceInfo> faces = engineManager.detectFaces(data, width, height);
+
+    WritableArray arr = Arguments.createArray();
+    for (FaceInfo fi : faces) {
+      arr.pushMap(faceInfoToMap(fi));
+    }
+    promise.resolve(arr);
+  }
+
+  @ReactMethod
+  public void extractFeature(ReadableArray nv21, int width, int height, int faceIndex, Promise promise) {
+    byte[] data = readableArrayToBytes(nv21);
+    List<FaceInfo> faces = engineManager.detectFaces(data, width, height);
+    if (faces.isEmpty() || faceIndex < 0 || faceIndex >= faces.size()) {
+      promise.resolve("");
+      return;
+    }
+    FaceFeature feature = engineManager.extractFeature(data, width, height, faces.get(faceIndex));
+    String base64 = ArcsoftEngineManager.featureToBase64(feature);
+    promise.resolve(base64);
+  }
+
+  @ReactMethod
+  public void compareFeatures(String featureABytesBase64, String featureBBytesBase64, Promise promise) {
     float score = engineManager.compareBase64(featureABytesBase64, featureBBytesBase64);
     promise.resolve((double) score);
   }
 
+  // ===== Age / Gender / Liveness =====
   @ReactMethod
-  public void processAttributes(ReadableArray bytes, int width, int height, String format, ReadableArray faceInfos, Promise promise) {
-    byte[] nv21 = toByteArray(bytes);
-    List<FaceInfo> faces = ArcsoftRNConverters.faceInfosFromJS(faceInfos);
-    ArcsoftEngineManager.AttrResult attrs = engineManager.processAttributes(nv21, width, height, faces);
+  public void processAttributes(ReadableArray nv21, int width, int height, Promise promise) {
+    byte[] data = readableArrayToBytes(nv21);
+    List<FaceInfo> faces = engineManager.detectFaces(data, width, height);
+    ArcsoftEngineManager.AttrResult attrs = engineManager.processAttributes(data, width, height, faces);
+
     WritableMap res = Arguments.createMap();
-    res.putArray("ages", ArcsoftRNConverters.toWritableIntArray(attrs.ages));
-    res.putArray("genders", ArcsoftRNConverters.toWritableIntArray(attrs.genders));
-    res.putArray("liveness", ArcsoftRNConverters.toWritableIntArray(attrs.liveness));
-    promise.resolve(res);
-  }
-
-  @ReactMethod
-  public void registerFace(String userId, String featureBytesBase64, Promise promise) {
-    int faceId = engineManager.registerFace(userId, featureBytesBase64);
-    promise.resolve(faceId);
-  }
-
-  @ReactMethod
-  public void searchFace(String featureBytesBase64, int maxResults, Promise promise) {
-    SearchResult r = engineManager.searchFace(featureBytesBase64, maxResults);
-    if (r == null) {
-      promise.resolve(null);
+    if (attrs == null) {
+      res.putArray("ages", Arguments.createArray());
+      res.putArray("genders", Arguments.createArray());
+      res.putArray("liveness", Arguments.createArray());
+      promise.resolve(res);
       return;
     }
-    WritableMap res = Arguments.createMap();
-    res.putInt("faceId", r.getFaceId());
-    res.putDouble("score", r.getScore());
+
+    WritableArray ages = Arguments.createArray();
+    WritableArray genders = Arguments.createArray();
+    WritableArray liveness = Arguments.createArray();
+
+    for (int v : attrs.ages) ages.pushInt(v);
+    for (int v : attrs.genders) genders.pushInt(v);
+    for (int v : attrs.liveness) liveness.pushInt(v);
+
+    res.putArray("ages", ages);
+    res.putArray("genders", genders);
+    res.putArray("liveness", liveness);
     promise.resolve(res);
   }
 
-  private static byte[] toByteArray(ReadableArray arr) {
-    byte[] out = new byte[arr.size()];
-    for (int i = 0; i < arr.size(); i++) {
-      out[i] = (byte) (arr.getInt(i) & 0xFF);
+  // ===== Face DB =====
+  @ReactMethod
+  public void registerFace(String faceTag, String featureBytesBase64, Promise promise) {
+    int id = engineManager.registerFace(faceTag, featureBytesBase64);
+    promise.resolve(id);
+  }
+
+  @ReactMethod
+  public void searchFace(String featureBytesBase64, int topN, Promise promise) {
+    List<SearchResult> results = engineManager.searchFace(featureBytesBase64, topN);
+
+    WritableArray arr = Arguments.createArray();
+    for (SearchResult r : results) {
+      WritableMap m = Arguments.createMap();
+      m.putDouble("score", r.getMaxSimilar());
+      FaceFeatureInfo info = r.getFaceFeatureInfo();
+      if (info != null) {
+        m.putInt("searchId", info.getSearchId());
+        m.putString("faceTag", info.getFaceTag());
+      } else {
+        m.putInt("searchId", -1);
+        m.putString("faceTag", "");
+      }
+      arr.pushMap(m);
     }
-    return out;
+    promise.resolve(arr);
+  }
+
+  @ReactMethod
+  public void removeFace(int searchId, Promise promise) {
+    int code = engineManager.removeFace(searchId);
+    promise.resolve(code);
+  }
+
+  @ReactMethod
+  public void getFaceCount(Promise promise) {
+    promise.resolve(engineManager.getFaceCount());
+  }
+
+  @ReactMethod
+  public void clearRegisteredFaces(Promise promise) {
+    promise.resolve(engineManager.clearRegisteredFaces());
   }
 }

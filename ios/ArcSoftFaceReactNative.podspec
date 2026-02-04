@@ -3,31 +3,31 @@ require "json"
 package = JSON.parse(File.read(File.join(__dir__, "..", "package.json")))
 
 Pod::Spec.new do |s|
-  s.name         = "ArcSoftFaceReactNative"
-  s.version      = package["version"]
-  s.summary      = package["description"]
-  s.homepage     = package["homepage"]
-  s.license      = package["license"]
-  s.authors      = package["author"]
-  s.platforms    = { :ios => "13.0" }
+  s.name         = 'ArcSoftFaceReactNative'
+  s.version      = package['version']
+  s.summary      = package['description']
+  s.homepage     = 'https://example.invalid'
+  s.license      = { :type => 'MIT', :file => 'LICENSE' }
+  s.author       = { 'you' => 'you@example.invalid' }
+  s.source       = { :path => '.' }
 
-  s.source = { :path => "." }
-  s.source_files = "ios/**/*.{h,m,mm,swift}"
+  s.platforms    = { :ios => '13.0' }
+  s.source_files = 'ios/**/*.{h,m,mm,cpp}'
+  s.public_header_files = 'ios/**/*.h'
+  s.requires_arc = true
 
-  # ✅ RN 0.78：桥接头文件来自 React-Core，不再需要 React-RCTBridge
-  s.dependency "React-RCTImage"        # 如果你用到 UIImage/图片工具可留；不用可删
-  s.dependency "ReactCommon/turbomodule/core" if new_arch_enabled
+  # RN 0.78: 只依赖 React-Core 即可提供 Bridge。新架构时额外依赖 Codegen。
+  s.dependency 'React-Core'
 
-  # 如果你有 codegen / TurboModule：
-  if new_arch_enabled
-    s.dependency "ReactCodegen"
-    s.pod_target_xcconfig = {
-      "CLANG_CXX_LANGUAGE_STANDARD" => "c++20",
-      "HEADER_SEARCH_PATHS" => "\"$(PODS_ROOT)/Headers/Public/React-Codegen\" \"$(PODS_ROOT)/Headers/Public/ReactCommon\""
-    }
-  else
-    s.pod_target_xcconfig = {
-      "CLANG_CXX_LANGUAGE_STANDARD" => "c++20"
-    }
+  if ENV['RCT_NEW_ARCH_ENABLED'] == '1'
+    s.dependency 'React-Codegen'
+    s.dependency 'RCT-Folly'
+    s.dependency 'RCTRequired'
+    s.dependency 'RCTTypeSafety'
+    s.dependency 'ReactCommon/turbomodule/core'
+    s.compiler_flags = '-DRCT_NEW_ARCH_ENABLED=1'
   end
+
+  # 让宿主工程链接 ArcSoftFaceEngine.framework（由你按官方 SDK 放入工程）
+  s.frameworks = 'CoreVideo', 'CoreMedia', 'Accelerate'
 end
