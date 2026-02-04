@@ -1,8 +1,0 @@
-# 1. 合并
-cat arcsoft_rn_ios_part*.b64 > arcsoft_rn_ios_all.b64
-
-# 2. 解码
-base64 --decode arcsoft_rn_ios_all.b64 > arcsoft-rn-ios-full.zip
-
-# 3. 解压
-unzip arcsoft-rn-ios-full.zip

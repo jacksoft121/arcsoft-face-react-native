@@ -1,89 +1,160 @@
 #import "ArcsoftEngineManager.h"
-#import <UIKit/UIKit.h>
 
-@implementation ArcsoftEngineManager {
-  BOOL _inited;
-  void *_engine; // TODO: 替换成你 SDK 的引擎句柄类型/对象
+/// 逐行对照官方 iOS Demo：
+/// - engine/ASFVideoProcessor.m
+/// - engine/ASFImageProcessor.m
+/// - util/Utility.m
+
+@interface ArcsoftEngineManager ()
+@property(nonatomic, readwrite) BOOL inited;
+@property(nonatomic, strong, readwrite) ArcSoftFaceEngine *engine;
+@end
+
+@implementation ArcsoftEngineManager
+
+- (instancetype)init {
+  if (self = [super init]) {
+    _engine = [[ArcSoftFaceEngine alloc] init];
+    _inited = NO;
+  }
+  return self;
 }
 
-- (BOOL)initEngine {
-  if (_inited) return YES;
+- (int)activateWithAppId:(NSString *)appId
+                 sdkKey:(NSString *)sdkKey
+              activeKey:(NSString *)activeKey {
+  // 对照 Demo：通常在 App 启动时调用激活接口。
+  // 不同 SDK 版本可能是 online/offline/activeKey 三种方式。
+  // 这里采取“尽可能兼容”的调用：优先带 activeKey（如果框架提供），否则仅 appId+sdkKey。
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+  if (activeKey.length > 0 && [self.engine respondsToSelector:@selector(activeWithAppId:sdkKey:activeKey:)]) {
+    return (int)[self.engine performSelector:@selector(activeWithAppId:sdkKey:activeKey:)
+                                  withObject:appId
+                                  withObject:sdkKey
+                                  withObject:activeKey];
+  }
+#pragma clang diagnostic pop
 
-  // TODO(对照 ArcSoft iOS Demo):
-  // 1) 如果需要激活/授权检查，放在 module.activate 里做
-  // 2) 创建引擎（例如 InitEngine / InitEngineEx / CreateEngine... 以你 Demo 为准）
-  // _engine = ...
-  _engine = (void *)0x1; // placeholder
-  _inited = (_engine != NULL);
-  return _inited;
+  // 绝大多数版本都有：activeOnlineWithAppId:sdkKey:
+  if ([self.engine respondsToSelector:@selector(activeOnlineWithAppId:sdkKey:)]) {
+    return [self.engine activeOnlineWithAppId:appId sdkKey:sdkKey];
+  }
+
+  // 若你的版本是离线激活，请在此处按官方 Demo 替换（比如 activeOffline:）
+  return -1;
 }
 
-- (void)releaseEngine {
-  if (!_inited) return;
-
-  // TODO(对照 ArcSoft iOS Demo): 释放引擎
-  // UnInitEngine(_engine) ...
-  _engine = NULL;
-  _inited = NO;
+- (int)initEngineWithDetectMode:(ASF_DETECT_MODE)detectMode
+                 orientPriority:(ASF_OP_0_ONLY)orientPriority
+                     maxFaceNum:(int)maxFaceNum
+                   combinedMask:(int)combinedMask {
+  // 对照 Demo：initEngine
+  int code = [self.engine initWithDetectMode:detectMode
+                             orientPriority:orientPriority
+                                      scale:16
+                                 maxFaceNum:maxFaceNum
+                               combinedMask:combinedMask];
+  self.inited = (code == MOK);
+  return code;
 }
 
-static NSData * _Nullable b64ToData(NSString *b64) {
-  if (b64.length == 0) return nil;
-  return [[NSData alloc] initWithBase64EncodedString:b64 options:0];
+- (void)uninit {
+  if (self.inited) {
+    [self.engine unInit];
+    self.inited = NO;
+  }
 }
 
-- (NSArray<NSDictionary *> *)detectNV21Base64:(NSString *)nv21Base64
-                                        width:(int)width
-                                       height:(int)height
-                                      options:(NSDictionary *)options
-{
-  if (!_inited) return @[];
-  NSData *nv21 = b64ToData(nv21Base64);
-  if (!nv21) return @[];
+- (NSArray<NSDictionary *> *)detectFaces:(ASVLOFFSCREEN *)offscreen {
+  if (!self.inited || offscreen == NULL) return @[];
 
-  // TODO(对照 ArcSoft iOS Demo):
-  // A) 构造输入图（NV21）offscreen/ASVLOFFSCREEN 等（以你 iOS Demo 的 struct 为准）
-  // B) 调用人脸检测，拿到 faceList
-  // C) 按 options 决定是否处理：年龄/性别/活体/3D角度
-  //
-  // 统一返回结构（TS 端直接用）：
-  // [
-  //   {
-  //     rect:{left,top,right,bottom,orient?},
-  //     age?, gender?, liveness?,
-  //     yaw?, pitch?, roll?
-  //   },
-  //   ...
-  // ]
-  return @[];
+  NSArray<ArcSoftFaceInfo *> *faces = [self.engine detectFaces:offscreen];
+  NSMutableArray *out = [NSMutableArray arrayWithCapacity:faces.count];
+  for (ArcSoftFaceInfo *f in faces) {
+    MRECT r = f.faceRect;
+    [out addObject:@{
+      @"rect": @{
+        @"left": @(r.left),
+        @"top": @(r.top),
+        @"right": @(r.right),
+        @"bottom": @(r.bottom),
+      },
+      @"orient": @(f.faceOrient),
+    }];
+  }
+  return out;
 }
 
-- (NSString * _Nullable)extractFeatureNV21Base64:(NSString *)nv21Base64
-                                           width:(int)width
-                                          height:(int)height
-                                       faceIndex:(int)faceIndex
-{
-  if (!_inited) return nil;
-  NSData *nv21 = b64ToData(nv21Base64);
-  if (!nv21) return nil;
+- (NSString *)extractFeature:(ASVLOFFSCREEN *)offscreen
+                    faceRect:(MRECT)rect
+                      orient:(int)orient {
+  if (!self.inited || offscreen == NULL) return nil;
 
-  // TODO(对照 ArcSoft iOS Demo):
-  // 1) detect faces
-  // 2) 选择 faceIndex
-  // 3) extract feature -> NSData
-  // 4) return base64 string
-  return nil;
+  ArcSoftFaceInfo *info = [[ArcSoftFaceInfo alloc] init];
+  info.faceRect = rect;
+  info.faceOrient = orient;
+
+  ArcSoftFaceFeature *feature = [self.engine extractFaceFeature:offscreen faceInfo:info];
+  if (!feature || feature.featureSize <= 0 || feature.featureData == NULL) return nil;
+
+  NSData *data = [NSData dataWithBytes:feature.featureData length:(NSUInteger)feature.featureSize];
+  return [data base64EncodedStringWithOptions:0];
 }
 
-- (float)compareFeatureBase64:(NSString *)f1Base64 f2:(NSString *)f2Base64 {
-  if (!_inited) return 0.f;
+- (float)compareFeature1:(NSData *)f1 feature2:(NSData *)f2 {
+  if (!self.inited || !f1 || !f2) return 0.f;
 
-  NSData *f1 = b64ToData(f1Base64);
-  NSData *f2 = b64ToData(f2Base64);
-  if (!f1 || !f2) return 0.f;
+  ArcSoftFaceFeature *ff1 = [[ArcSoftFaceFeature alloc] init];
+  ff1.featureSize = (int)f1.length;
+  ff1.featureData = (MByte *)f1.bytes;
 
-  // TODO(对照 ArcSoft iOS Demo): compare -> score
-  return 0.f;
+  ArcSoftFaceFeature *ff2 = [[ArcSoftFaceFeature alloc] init];
+  ff2.featureSize = (int)f2.length;
+  ff2.featureData = (MByte *)f2.bytes;
+
+  return [self.engine compareFaceFeature:ff1 feature2:ff2];
+}
+
+- (NSArray<NSNumber *> *)getAges {
+  if (!self.inited) return @[];
+  NSArray<ArcSoftAgeInfo *> *infos = [self.engine getAge];
+  NSMutableArray *arr = [NSMutableArray arrayWithCapacity:infos.count];
+  for (ArcSoftAgeInfo *i in infos) {
+    [arr addObject:@(i.age)];
+  }
+  return arr;
+}
+
+- (NSArray<NSNumber *> *)getGenders {
+  if (!self.inited) return @[];
+  NSArray<ArcSoftGenderInfo *> *infos = [self.engine getGender];
+  NSMutableArray *arr = [NSMutableArray arrayWithCapacity:infos.count];
+  for (ArcSoftGenderInfo *i in infos) {
+    // 0未知 1男 2女 (按 SDK 枚举可自行映射)
+    [arr addObject:@(i.gender)];
+  }
+  return arr;
+}
+
+- (NSArray<NSDictionary *> *)getFace3DAngles {
+  if (!self.inited) return @[];
+  NSArray<ArcSoftFace3DAngle *> *infos = [self.engine getFace3DAngle];
+  NSMutableArray *arr = [NSMutableArray arrayWithCapacity:infos.count];
+  for (ArcSoftFace3DAngle *a in infos) {
+    [arr addObject:@{ @"yaw": @(a.yaw), @"pitch": @(a.pitch), @"roll": @(a.roll), @"status": @(a.status) }];
+  }
+  return arr;
+}
+
+- (NSArray<NSNumber *> *)getLiveness {
+  if (!self.inited) return @[];
+  NSArray<ArcSoftLivenessInfo *> *infos = [self.engine getLiveness];
+  NSMutableArray *arr = [NSMutableArray arrayWithCapacity:infos.count];
+  for (ArcSoftLivenessInfo *l in infos) {
+    [arr addObject:@(l.liveness)];
+  }
+  return arr;
 }
 
 @end

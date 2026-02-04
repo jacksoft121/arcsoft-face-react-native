@@ -2,22 +2,29 @@ apply plugin: 'com.android.library'
 apply plugin: 'org.jetbrains.kotlin.android'
 
 android {
-  namespace "com.arcsoftfacern"
+  namespace 'com.arcsoftfacern'
   compileSdkVersion 34
 
   defaultConfig {
-    minSdkVersion 21
+    minSdkVersion 24
     targetSdkVersion 34
     consumerProguardFiles 'consumer-rules.pro'
+  }
+
+  sourceSets {
+    main {
+      java.srcDirs = ['src/main/java']
+    }
   }
 
   compileOptions {
     sourceCompatibility JavaVersion.VERSION_17
     targetCompatibility JavaVersion.VERSION_17
   }
-  kotlinOptions {
-    jvmTarget = '17'
-  }
+}
+
+repositories {
+  google(); mavenCentral()
 }
 
 dependencies {
