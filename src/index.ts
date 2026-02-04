@@ -16,6 +16,8 @@ export type InitEngineOptions = {
   enable3DAngle?: boolean;
 };
 
+export const setLogLevel = (level: number) => ArcsoftFaceNative.setLogLevel(level);
+
 /** SDK 在线激活（返回 0 表示成功） */
 export const activateOnline = (appId: string, sdkKey: string): Promise<number> =>
     ArcsoftFaceNative.activateOnline(appId, sdkKey);
@@ -96,6 +98,7 @@ export const faceDBSearch = (
  * 默认导出：一个与原生同名的对象（方便用户 `import ArcsoftFace from 'xxx'`）
  */
 const ArcsoftFace = {
+  setLogLevel,
   activateOnline,
   initEngine,
   unInitEngine,

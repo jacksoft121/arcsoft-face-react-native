@@ -2,6 +2,7 @@ package com.arcsoftfacern;
 
 import android.graphics.Rect;
 import android.util.Base64;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 
@@ -28,6 +29,7 @@ import java.util.List;
 
 /**
  * TurboModule JS API alignment:
+ * - setLogLevel(level)
  * - activateOnline(appId, sdkKey)
  * - initEngine(options)
  * - unInitEngine()
@@ -39,6 +41,8 @@ import java.util.List;
  */
 public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
 
+  private static final String TAG = "ArcsoftFaceRN";
+
   private final ReactApplicationContext reactContext;
   private ArcsoftEngineManager engineManager;
 
@@ -46,6 +50,7 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     super(reactContext);
     this.reactContext = reactContext;
     this.engineManager = ArcsoftEngineManager.getInstance(reactContext);
+    Log.i(TAG, "ArcsoftFaceModule created");
   }
 
   @NonNull
@@ -77,10 +82,10 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
 
   private static Rect rectFromMap(ReadableMap m) {
     return new Rect(
-        m.getInt("left"),
-        m.getInt("top"),
-        m.getInt("right"),
-        m.getInt("bottom")
+            m.getInt("left"),
+            m.getInt("top"),
+            m.getInt("right"),
+            m.getInt("bottom")
     );
   }
 
@@ -97,7 +102,6 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     m.putMap("rect", rectToMap(fi.getRect()));
     m.putInt("orient", fi.getOrient());
 
-    // IMPORTANT: keep faceData so extract/process can reconstruct full FaceInfo.
     byte[] faceData = fi.getFaceData();
     if (faceData != null) {
       m.putString("faceDataBase64", Base64.encodeToString(faceData, Base64.NO_WRAP));
@@ -142,27 +146,43 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
   // Public JS methods
   // -------------------------
 
+  /**
+   * 0=OFF,1=ERROR,2=WARN,3=INFO,4=DEBUG,5=VERBOSE
+   */
+  @ReactMethod
+  public void setLogLevel(int level, Promise promise) {
+    try {
+      Log.i(TAG, "setLogLevel(" + level + ")");
+      ArcsoftEngineManager.setLogLevel(level);
+      promise.resolve(true);
+    } catch (Throwable t) {
+      promise.reject("setLogLevel_failed", t);
+    }
+  }
+
   @ReactMethod
   public void activateOnline(String appId, String sdkKey, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.i(TAG, "activateOnline(appId.len=" + (appId == null ? 0 : appId.length()) + ", sdkKey.len=" + (sdkKey == null ? 0 : sdkKey.length()) + ")");
     try {
       int code = engineManager.activateOnline(appId, sdkKey);
+      Log.i(TAG, "activateOnline => code=" + code + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(code);
     } catch (Throwable t) {
+      Log.e(TAG, "activateOnline failed", t);
       promise.reject("activateOnline_failed", t);
     }
   }
 
   @ReactMethod
   public void initEngine(ReadableMap options, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.i(TAG, "initEngine(options=" + (options == null ? "null" : options.toString()) + ")");
     try {
       String detectModeStr = options.hasKey("detectMode") ? options.getString("detectMode") : "video";
       DetectMode detectMode = "image".equalsIgnoreCase(detectModeStr) ? DetectMode.ASF_DETECT_MODE_IMAGE : DetectMode.ASF_DETECT_MODE_VIDEO;
 
       int maxFaceNum = options.hasKey("maxFaceNum") ? options.getInt("maxFaceNum") : 5;
-
-      // NOTE: scale is a common SDK setting but not in current FaceEngine.init signature;
-      // we keep it in TS for future compatibility but do not apply here.
-      // int scale = options.hasKey("scale") ? options.getInt("scale") : 16;
 
       boolean enableAge = options.hasKey("enableAge") && options.getBoolean("enableAge");
       boolean enableGender = options.hasKey("enableGender") && options.getBoolean("enableGender");
@@ -173,137 +193,171 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
       if (enableAge) combinedMask |= FaceEngine.ASF_AGE;
       if (enableGender) combinedMask |= FaceEngine.ASF_GENDER;
       if (enableLiveness) combinedMask |= FaceEngine.ASF_LIVENESS;
-      // 3D angle is embedded in FaceInfo; keep switch only for TS compatibility.
+
+      // 3D angle: usually comes in FaceInfo; keep flag only for TS compatibility
 
       int code = engineManager.initEngine(
-          detectMode,
-          DetectFaceOrientPriority.ASF_OP_ALL_OUT, // official demo default
-          maxFaceNum,
-          combinedMask
+              detectMode,
+              DetectFaceOrientPriority.ASF_OP_ALL_OUT,
+              maxFaceNum,
+              combinedMask
       );
+
+      Log.i(TAG, "initEngine => code=" + code + ", mask=" + combinedMask + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(code);
     } catch (Throwable t) {
+      Log.e(TAG, "initEngine failed", t);
       promise.reject("initEngine_failed", t);
     }
   }
 
   @ReactMethod
   public void unInitEngine(Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.i(TAG, "unInitEngine()");
     try {
       int code = engineManager.unInitEngine();
+      Log.i(TAG, "unInitEngine => code=" + code + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(code);
     } catch (Throwable t) {
+      Log.e(TAG, "unInitEngine failed", t);
       promise.reject("unInitEngine_failed", t);
     }
   }
 
   @ReactMethod
   public void detectFacesNV21(ReadableArray nv21, int width, int height, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "detectFacesNV21(w=" + width + ", h=" + height + ", len=" + (nv21 == null ? 0 : nv21.size()) + ")");
     try {
       byte[] bytes = nv21FromReadableArray(nv21);
       List<FaceInfo> faces = engineManager.detectFacesNV21(bytes, width, height);
       WritableArray out = Arguments.createArray();
       for (FaceInfo f : faces) out.pushMap(faceInfoToMap(f));
+      Log.d(TAG, "detectFacesNV21 => faces=" + faces.size() + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(out);
     } catch (Throwable t) {
+      Log.e(TAG, "detectFacesNV21 failed", t);
       promise.reject("detectFaces_failed", t);
     }
   }
 
   @ReactMethod
   public void extractFeatureNV21(ReadableArray nv21, int width, int height, ReadableMap face, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "extractFeatureNV21(w=" + width + ", h=" + height + ")");
     try {
       byte[] bytes = nv21FromReadableArray(nv21);
       FaceInfo fi = faceInfoFromMap(face);
       FaceFeature feat = engineManager.extractFeatureNV21(bytes, width, height, fi);
       if (feat == null || feat.getFeatureData() == null) {
+        Log.w(TAG, "extractFeatureNV21 => null");
         promise.resolve(null);
         return;
       }
       WritableMap res = Arguments.createMap();
       res.putString("dataBase64", Base64.encodeToString(feat.getFeatureData(), Base64.NO_WRAP));
+      Log.d(TAG, "extractFeatureNV21 => ok, cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(res);
     } catch (Throwable t) {
+      Log.e(TAG, "extractFeatureNV21 failed", t);
       promise.reject("extractFeature_failed", t);
     }
   }
 
   @ReactMethod
   public void compareFeature(ReadableMap f1, ReadableMap f2, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "compareFeature()");
     try {
       String a = f1.getString("dataBase64");
       String b = f2.getString("dataBase64");
       float score = engineManager.compareBase64(a, b);
+      Log.d(TAG, "compareFeature => score=" + score + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve((double) score);
     } catch (Throwable t) {
+      Log.e(TAG, "compareFeature failed", t);
       promise.reject("compareFeature_failed", t);
     }
   }
 
   @ReactMethod
   public void getAgeNV21(ReadableArray nv21, int width, int height, ReadableArray faces, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "getAgeNV21(faces=" + (faces == null ? 0 : faces.size()) + ")");
     try {
       ArcsoftEngineManager.AttrResult r = engineManager.processAttributes(
-          nv21FromReadableArray(nv21),
-          width,
-          height,
-          faceInfosFromReadableArray(faces),
-          FaceEngine.ASF_AGE
+              nv21FromReadableArray(nv21),
+              width,
+              height,
+              faceInfosFromReadableArray(faces),
+              FaceEngine.ASF_AGE
       );
       WritableArray out = Arguments.createArray();
       for (int v : r.ages) out.pushInt(v);
+      Log.d(TAG, "getAgeNV21 => n=" + r.ages.length + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(out);
     } catch (Throwable t) {
+      Log.e(TAG, "getAgeNV21 failed", t);
       promise.reject("getAge_failed", t);
     }
   }
 
   @ReactMethod
   public void getGenderNV21(ReadableArray nv21, int width, int height, ReadableArray faces, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "getGenderNV21(faces=" + (faces == null ? 0 : faces.size()) + ")");
     try {
       ArcsoftEngineManager.AttrResult r = engineManager.processAttributes(
-          nv21FromReadableArray(nv21),
-          width,
-          height,
-          faceInfosFromReadableArray(faces),
-          FaceEngine.ASF_GENDER
+              nv21FromReadableArray(nv21),
+              width,
+              height,
+              faceInfosFromReadableArray(faces),
+              FaceEngine.ASF_GENDER
       );
       WritableArray out = Arguments.createArray();
       for (int v : r.genders) out.pushInt(v);
+      Log.d(TAG, "getGenderNV21 => n=" + r.genders.length + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(out);
     } catch (Throwable t) {
+      Log.e(TAG, "getGenderNV21 failed", t);
       promise.reject("getGender_failed", t);
     }
   }
 
   @ReactMethod
   public void getLivenessNV21(ReadableArray nv21, int width, int height, ReadableArray faces, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "getLivenessNV21(faces=" + (faces == null ? 0 : faces.size()) + ")");
     try {
       ArcsoftEngineManager.AttrResult r = engineManager.processAttributes(
-          nv21FromReadableArray(nv21),
-          width,
-          height,
-          faceInfosFromReadableArray(faces),
-          FaceEngine.ASF_LIVENESS
+              nv21FromReadableArray(nv21),
+              width,
+              height,
+              faceInfosFromReadableArray(faces),
+              FaceEngine.ASF_LIVENESS
       );
       WritableArray out = Arguments.createArray();
       for (int v : r.liveness) out.pushInt(v);
+      Log.d(TAG, "getLivenessNV21 => n=" + r.liveness.length + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(out);
     } catch (Throwable t) {
+      Log.e(TAG, "getLivenessNV21 failed", t);
       promise.reject("getLiveness_failed", t);
     }
   }
 
   @ReactMethod
   public void getFace3DAngleNV21(ReadableArray nv21, int width, int height, ReadableArray faces, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "getFace3DAngleNV21(faces=" + (faces == null ? 0 : faces.size()) + ")");
     try {
-      // We still call processAttributes to keep the same pipeline; 3D comes from faces.
       ArcsoftEngineManager.AttrResult r = engineManager.processAttributes(
-          nv21FromReadableArray(nv21),
-          width,
-          height,
-          faceInfosFromReadableArray(faces),
-          0
+              nv21FromReadableArray(nv21),
+              width,
+              height,
+              faceInfosFromReadableArray(faces),
+              0
       );
       WritableArray out = Arguments.createArray();
       for (int i = 0; i < r.rolls.length; i++) {
@@ -313,8 +367,10 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
         m.putDouble("yaw", i < r.yaws.length ? r.yaws[i] : 0);
         out.pushMap(m);
       }
+      Log.d(TAG, "getFace3DAngleNV21 => n=" + r.rolls.length + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(out);
     } catch (Throwable t) {
+      Log.e(TAG, "getFace3DAngleNV21 failed", t);
       promise.reject("get3DAngle_failed", t);
     }
   }
@@ -324,46 +380,65 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
   // -------------------------
   @ReactMethod
   public void faceDBAdd(String id, ReadableMap feature, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "faceDBAdd(id=" + id + ")");
     try {
       String b64 = feature.getString("dataBase64");
       boolean ok = engineManager.faceDBAddOrUpdate(id, b64);
+      Log.d(TAG, "faceDBAdd => ok=" + ok + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(ok);
     } catch (Throwable t) {
+      Log.e(TAG, "faceDBAdd failed", t);
       promise.reject("faceDBAdd_failed", t);
     }
   }
 
   @ReactMethod
   public void faceDBRemove(String id, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "faceDBRemove(id=" + id + ")");
     try {
       boolean ok = engineManager.faceDBRemove(id);
+      Log.d(TAG, "faceDBRemove => ok=" + ok + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(ok);
     } catch (Throwable t) {
+      Log.e(TAG, "faceDBRemove failed", t);
       promise.reject("faceDBRemove_failed", t);
     }
   }
 
   @ReactMethod
   public void faceDBClear(Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "faceDBClear()");
     try {
       engineManager.faceDBClear();
+      Log.d(TAG, "faceDBClear => ok, cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(null);
     } catch (Throwable t) {
+      Log.e(TAG, "faceDBClear failed", t);
       promise.reject("faceDBClear_failed", t);
     }
   }
 
   @ReactMethod
   public void faceDBCount(Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "faceDBCount()");
     try {
-      promise.resolve(engineManager.faceDBCount());
+      int c = engineManager.faceDBCount();
+      Log.d(TAG, "faceDBCount => " + c + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+      promise.resolve(c);
     } catch (Throwable t) {
+      Log.e(TAG, "faceDBCount failed", t);
       promise.reject("faceDBCount_failed", t);
     }
   }
 
   @ReactMethod
   public void faceDBSearch(ReadableMap feature, double threshold, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "faceDBSearch(threshold=" + threshold + ")");
     try {
       String b64 = feature.getString("dataBase64");
       SearchResult sr = engineManager.faceDBSearchTop1(b64);
@@ -371,6 +446,7 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
       if (sr == null || sr.getFaceFeatureInfo() == null) {
         res.putNull("id");
         res.putDouble("score", 0);
+        Log.d(TAG, "faceDBSearch => null, cost=" + (System.currentTimeMillis() - t0) + "ms");
         promise.resolve(res);
         return;
       }
@@ -383,8 +459,10 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
         res.putString("id", tag);
         res.putDouble("score", score);
       }
+      Log.d(TAG, "faceDBSearch => id=" + tag + ", score=" + score + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(res);
     } catch (Throwable t) {
+      Log.e(TAG, "faceDBSearch failed", t);
       promise.reject("faceDBSearch_failed", t);
     }
   }

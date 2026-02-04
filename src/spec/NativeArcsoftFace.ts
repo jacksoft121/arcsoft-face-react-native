@@ -76,6 +76,7 @@ export interface Spec extends TurboModule {
     feature: FaceFeature,
     threshold?: number
   ): Promise<{ id: string | null; score: number }>;
+  setLogLevel(level: number): Promise<boolean>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('ArcsoftFace');
