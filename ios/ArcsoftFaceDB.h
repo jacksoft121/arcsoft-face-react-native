@@ -1,24 +1,28 @@
 #import <Foundation/Foundation.h>
-#import <ArcSoftFaceEngine/ArcSoftFaceEngine.h>
+
+@class ArcSoftFaceEngine;
 
 NS_ASSUME_NONNULL_BEGIN
 
-/// 人脸库：内存实现（可扩展持久化）
-/// iOS Demo 对照：
-/// - 你提供的 Demo 中通常在业务层自己存储 FaceFeature，这里抽象成独立类。
 @interface ArcsoftFaceDB : NSObject
 
-/// 保存/更新一条特征
-- (void)upsertFeature:(ArcSoftFaceFeature *)feature forUserId:(NSString *)userId;
+- (instancetype)init;
 
-/// 删除
+/// 插入/更新：userId -> 特征bytes
+- (void)upsertFeatureData:(NSData *)featureData forUserId:(NSString *)userId;
+
+/// 删除某个 userId 的特征
 - (void)removeFeatureForUserId:(NSString *)userId;
 
 /// 清空
 - (void)clear;
 
-/// 批量取出（用于遍历检索）
-- (NSDictionary<NSString *, ArcSoftFaceFeature *> *)allFeatures;
+/// 逐个比对（本地 map），返回 topK（按 score 降序）
+/// 返回结构：[{ userId: NSString, score: NSNumber }, ...]
+- (NSArray<NSDictionary *> *)searchWithEngine:(ArcSoftFaceEngine *)engine
+                                  featureData:(NSData *)featureData
+                                         topK:(NSInteger)topK
+                                    threshold:(float)threshold;
 
 @end
 

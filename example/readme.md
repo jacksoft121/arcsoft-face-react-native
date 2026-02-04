@@ -115,6 +115,15 @@ package.json 填好 name/version/main/module/types/files（bob 会帮你生成 l
 
 yarn build
 
+yarn link
+yarn link /Users/jackxu/dlxcode/arcsoft-face-react-native
+in metro.config.js  const lib_arcsoft  = path.resolve(root, '/Users/jackxu/dlxcode/arcsoft-face-react-native'); // 你的 link 包路径
+
+package.json add "arcsoft-face-react-native": "portal://Users/jackxu/dlxcode/arcsoft-face-react-native",
+
+
+yarn pack
+
 npm login
 
 npm publish

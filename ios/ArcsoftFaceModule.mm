@@ -1,5 +1,6 @@
 #import "ArcsoftFaceModule.h"
 #import <React/RCTUtils.h>
+#import <stdarg.h>
 
 #ifndef RCT_NEW_ARCH_ENABLED
 #import <React/RCTBridge.h>
@@ -20,6 +21,46 @@
 
 @implementation ArcsoftFaceModule
 
+// =========================
+// Logging
+// 0=OFF 1=ERROR 2=WARN 3=INFO 4=DEBUG 5=VERBOSE
+// =========================
+static NSInteger ASF_LOG_LEVEL = 3;
+
+static inline BOOL asf_log_enabled(NSInteger level) {
+  return ASF_LOG_LEVEL != 0 && ASF_LOG_LEVEL >= level;
+}
+
+static inline void asf_logI(NSString *fmt, ...) {
+  if (!asf_log_enabled(3)) return;
+  va_list args; va_start(args, fmt);
+  NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
+  va_end(args);
+  NSLog(@"[ArcsoftFaceRN][I] %@", msg);
+}
+static inline void asf_logD(NSString *fmt, ...) {
+  if (!asf_log_enabled(4)) return;
+  va_list args; va_start(args, fmt);
+  NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
+  va_end(args);
+  NSLog(@"[ArcsoftFaceRN][D] %@", msg);
+}
+static inline void asf_logW(NSString *fmt, ...) {
+  if (!asf_log_enabled(2)) return;
+  va_list args; va_start(args, fmt);
+  NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
+  va_end(args);
+  NSLog(@"[ArcsoftFaceRN][W] %@", msg);
+}
+static inline void asf_logE(NSError * _Nullable err, NSString *fmt, ...) {
+  if (!asf_log_enabled(1)) return;
+  va_list args; va_start(args, fmt);
+  NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
+  va_end(args);
+  NSLog(@"[ArcsoftFaceRN][E] %@%@", msg, err ? [NSString stringWithFormat:@" | %@", err] : @"");
+}
+
+
 RCT_EXTERN_METHOD(dummy)
 
 + (BOOL)requiresMainQueueSetup {
@@ -33,6 +74,22 @@ RCT_EXTERN_METHOD(dummy)
   }
   return self;
 }
+
+#pragma mark - Logging
+
+RCT_EXPORT_METHOD(setLogLevel:(nonnull NSNumber *)level
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
+{
+  @try {
+    ASF_LOG_LEVEL = [level integerValue];
+    asf_logI(@"setLogLevel=%ld", (long)ASF_LOG_LEVEL);
+    resolve(level);
+  } @catch (NSException *e) {
+    reject(@"SET_LOG_LEVEL_FAILED", e.reason, nil);
+  }
+}
+
 
 #ifndef RCT_NEW_ARCH_ENABLED
 RCT_EXPORT_MODULE(ArcsoftFace)
@@ -59,6 +116,8 @@ RCT_EXPORT_METHOD(activateOnline:(NSString *)appId
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
+  asf_logI(@"activateOnline appIdLen=%lu", (unsigned long)appId.length);
+
   // iOS SDK：在线激活接口在 ArcSoftFaceEngine.h
   MRESULT code = [ArcSoftFaceEngine activeOnlineWithAppId:appId sdkKey:sdkKey];
   if (code == MOK) {
@@ -72,6 +131,8 @@ RCT_EXPORT_METHOD(initEngine:(NSDictionary *)options
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
+  asf_logI(@"initEngine options=%@", options);
+
   NSString *appId = options[@"appId"] ?: @"";
   NSString *sdkKey = options[@"sdkKey"] ?: @"";
   NSNumber *mask = options[@"combinedMask"] ?: @(ASF_FACE_DETECT);
@@ -87,6 +148,8 @@ RCT_EXPORT_METHOD(initEngine:(NSDictionary *)options
 RCT_EXPORT_METHOD(unInitEngine:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
+  asf_logI(@"unInitEngine");
+
   [self.engineManager unInitEngine];
   resolve(@(YES));
 }
@@ -95,6 +158,8 @@ RCT_EXPORT_METHOD(detectFaces:(NSDictionary *)image
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
+  asf_logD(@"detectFaces image=%@", image);
+
   NSData *data = DataFromBase64(image[@"data"]);
   if (!data) {
     reject(@"BAD_IMAGE", @"image.data (base64) is required", nil);
@@ -114,6 +179,8 @@ RCT_EXPORT_METHOD(extractFeature:(NSDictionary *)image
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
+  asf_logD(@"extractFeature faceIndex=%f", faceIndex);
+
   NSData *data = DataFromBase64(image[@"data"]);
   if (!data) {
     reject(@"BAD_IMAGE", @"image.data (base64) is required", nil);
@@ -136,6 +203,8 @@ RCT_EXPORT_METHOD(compareFeature:(NSDictionary *)f1
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
+  asf_logD(@"compareFeature");
+
   NSData *d1 = DataFromBase64(f1[@"dataBase64"]);
   NSData *d2 = DataFromBase64(f2[@"dataBase64"]);
   if (!d1 || !d2) {
@@ -156,6 +225,8 @@ RCT_EXPORT_METHOD(processAttributes:(NSDictionary *)image
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
+  asf_logD(@"processAttributes needAge=%d needGender=%d needLiveness=%d need3DAngle=%d", needAge, needGender, needLiveness, need3DAngle);
+
   NSData *data = DataFromBase64(image[@"data"]);
   if (!data) {
     reject(@"BAD_IMAGE", @"image.data (base64) is required", nil);
@@ -182,6 +253,8 @@ RCT_EXPORT_METHOD(dbUpsert:(NSString *)userId
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
+  asf_logI(@"dbUpsert userId=%@", userId);
+
   NSData *d = DataFromBase64(feature[@"dataBase64"]);
   if (!d) {
     reject(@"BAD_FEATURE", @"feature.dataBase64 required", nil);
@@ -207,6 +280,8 @@ RCT_EXPORT_METHOD(dbRemove:(NSString *)userId
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
+  asf_logI(@"dbRemove userId=%@", userId);
+
   [self.faceDB removeFeatureForUserId:userId];
   resolve(@(YES));
 }
@@ -217,6 +292,8 @@ RCT_EXPORT_METHOD(dbSearch:(NSDictionary *)feature
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
+  asf_logD(@"dbSearch topK=%f threshold=%f", topK, threshold);
+
   NSData *d = DataFromBase64(feature[@"dataBase64"]);
   if (!d) {
     reject(@"BAD_FEATURE", @"feature.dataBase64 required", nil);
@@ -230,6 +307,8 @@ RCT_EXPORT_METHOD(dbSearch:(NSDictionary *)feature
 RCT_EXPORT_METHOD(dbClear:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
+  asf_logI(@"dbClear");
+
   [self.faceDB clear];
   resolve(@(YES));
 }

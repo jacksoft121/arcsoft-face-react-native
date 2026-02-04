@@ -43,7 +43,7 @@
 
   } else if (fmt == kCVPixelFormatType_32BGRA) {
 
-    offscreen.u32PixelArrayFormat = ASVL_PAF_BGRA32;
+    offscreen.u32PixelArrayFormat = ASVL_PAF_RGB32_R8G8B8A8;
     offscreen.i32Width = (MInt32)width;
     offscreen.i32Height = (MInt32)height;
 

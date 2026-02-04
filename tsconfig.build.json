@@ -8,5 +8,5 @@
     "noEmit": false
   },
   "include": ["src/**/*"],
-  "exclude": [".github",".idea","arcsoft_sdk_v5","node_modules", "lib", "example", "example/**/*","ios", "android"]
+  "exclude": [".github",".idea","DOCS","arcsoft_sdk_v5","node_modules", "lib", "example", "example/**/*","ios", "android"]
 }
