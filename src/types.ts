@@ -1,22 +1,26 @@
-export type ArcFaceInitOptions = {
-  /** iOS/Android AppId from ArcSoft console */
-  appId: string;
-  /** iOS/Android SDK Key */
-  sdkKey: string;
-  /** detect mode, etc. Keep minimal for now; extend to match demo options */
-  detectMode?: number;
-  /** max faces */
-  maxFaceNum?: number;
-};
+export interface FaceRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  orient?: number;
+}
 
-export type ArcFaceVersion = {
-  version: string;
-  build?: string;
-};
+export interface FaceInfo {
+  rect: FaceRect;
+  age?: number;
+  gender?: number; // 0 female / 1 male
+  liveness?: number; // 0 alive / 1 not alive
+  yaw?: number;
+  pitch?: number;
+  roll?: number;
+}
 
-export type FaceRect = { left: number; top: number; right: number; bottom: number };
-export type DetectFaceResult = { faces: Array<{ rect: FaceRect; orient?: number; confidence?: number }> };
+export interface FaceFeature {
+  data: string; // base64
+}
 
-export type LivenessResult = { isLive: boolean; score?: number };
-export type FeatureExtractResult = { featureBase64: string; length: number };
-export type CompareResult = { score: number };
+export interface FaceSearchResult {
+  name: string;
+  score: number;
+}

@@ -1,7 +1,6 @@
 require "json"
 
-package = JSON.parse(File.read(File.join(__dir__, "../package.json")))
-new_arch_enabled = ENV['RCT_NEW_ARCH_ENABLED'] == '1'
+package = JSON.parse(File.read(File.join(__dir__, "..", "package.json")))
 
 Pod::Spec.new do |s|
   s.name         = "ArcSoftFaceReactNative"
