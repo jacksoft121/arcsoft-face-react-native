@@ -1,1 +1,0 @@
-{"version":3,"file":"ArcFaceRegistry.d.ts","sourceRoot":"","sources":["../../../src/ArcFaceRegistry.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,EAAE,2BAA2B,EAAE,MAAM,SAAS,CAAC;AA4B3D,eAAO,MAAM,eAAe;IAC1B,yCAAyC;;IAUzC,yCAAyC;qBAClB,MAAM,iBAAiB,MAAM,eAAe,MAAM;qBAIlD,MAAM;;IAQ7B;;;OAGG;gCAC+B,MAAM,aAAa,MAAM;CAM5D,CAAC"}

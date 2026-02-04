@@ -8,6 +8,15 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "jsx": "react-jsx",
-    "types": ["react", "react-native"]
-  }
+    "types": ["react"]
+  },
+  "include": ["src/**/*"],
+  "exclude": [
+    "example",
+    "example/**/*",
+    "android",
+    "ios",
+    "lib",
+    "node_modules"
+  ]
 }

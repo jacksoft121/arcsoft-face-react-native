@@ -1,17 +1,39 @@
 {
   "name": "arcsoft-face-react-native",
   "version": "0.1.0",
-  "main": "dist/commonjs/index.js",
-  "module": "dist/esm/index.js",
-  "types": "dist/types/index.d.ts",
+  "main": "lib/commonjs/index.js",
+  "module": "lib/module/index.js",
+  "types": "lib/typescript/src/index.d.ts",
   "react-native": "src/index.ts",
   "files": [
     "src",
-    "ios",
+    "lib",
+    "!**/__tests__",
+    "!**/__fixtures__",
+    "!**/__mocks__",
     "android",
-    "README.md",
-    "DOCS"
+    "ios",
+    "*.podspec",
+    "react-native.config.js",
+    "README.md"
   ],
+  "scripts": {
+    "build": "bob build",
+    "clean": "rimraf lib",
+    "prepack": "yarn clean && yarn build",
+    "prepare": "bob build"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  },
+  "devDependencies": {
+    "@react-native-community/bob": "^0.17.1",
+    "@types/react": "^19.2.10",
+    "@types/react-native": "^0.73.0",
+    "rimraf": "^6.1.2",
+    "typescript": "^5.9.3"
+  },
   "keywords": [
     "react-native",
     "arcsoft",
@@ -19,13 +41,22 @@
     "face",
     "liveness"
   ],
-  "peerDependencies": {
-    "react": "*",
-    "react-native": "*"
-  },
-  "author": "Jack Xu <jack.xu@inspireglobal.com>",
+  "author": "Jack Xu <328416850@qq.com>",
   "license": "MIT",
-  "homepage": "https://github.com/inspireglobal/react-native-nitro-inspire-face#readme",
-   "summary":"React Native ArcSoft Face SDK",
-   "description":"React Native ArcSoft Face SDK for Android and iOS"
+  "homepage": "https://github.com/jackxu/arcsoft-face-react-native#readme",
+  "summary": "React Native ArcSoft Face SDK",
+  "description": "React Native ArcSoft Face SDK for Android and iOS",
+  "@react-native-community/bob": {
+    "source": "src",
+    "output": "lib",
+    "targets": [
+      "commonjs",
+      "module",
+      "typescript"
+    ]
+  },
+  "eslintIgnore": [
+    "node_modules/",
+    "lib/"
+  ]
 }
