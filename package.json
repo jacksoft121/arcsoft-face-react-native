@@ -23,6 +23,11 @@
     "prepack": "yarn clean && yarn build",
     "prepare": "bob build"
   },
+  "codegenConfig": {
+    "name": "ArcSoftFaceReactNativeSpec",
+    "type": "modules",
+    "jsSrcsDir": "src"
+  },
   "peerDependencies": {
     "react": "*",
     "react-native": "*"

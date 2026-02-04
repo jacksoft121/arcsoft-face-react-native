@@ -8,6 +8,8 @@
 @interface ArcsoftEngineManager ()
 @property(nonatomic, readwrite) BOOL inited;
 @property(nonatomic, strong, readwrite) ArcSoftFaceEngine *engine;
+@property(nonatomic, assign) int combinedMask;
+@property(nonatomic, strong) NSArray<NSDictionary *> *lastFace3DAngles;
 @end
 
 @implementation ArcsoftEngineManager
@@ -16,6 +18,8 @@
   if (self = [super init]) {
     _engine = [[ArcSoftFaceEngine alloc] init];
     _inited = NO;
+    _combinedMask = 0;
+    _lastFace3DAngles = @[];
   }
   return self;
 }
@@ -26,33 +30,24 @@
   // 对照 Demo：通常在 App 启动时调用激活接口。
   // 不同 SDK 版本可能是 online/offline/activeKey 三种方式。
   // 这里采取“尽可能兼容”的调用：优先带 activeKey（如果框架提供），否则仅 appId+sdkKey。
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-  if (activeKey.length > 0 && [self.engine respondsToSelector:@selector(activeWithAppId:sdkKey:activeKey:)]) {
-    return (int)[self.engine performSelector:@selector(activeWithAppId:sdkKey:activeKey:)
-                                  withObject:appId
-                                  withObject:sdkKey
-                                  withObject:activeKey];
-  }
-#pragma clang diagnostic pop
 
-  // 绝大多数版本都有：activeOnlineWithAppId:sdkKey:
-  if ([self.engine respondsToSelector:@selector(activeOnlineWithAppId:sdkKey:)]) {
-    return [self.engine activeOnlineWithAppId:appId sdkKey:sdkKey];
+  // 绝大多数版本都有：activeWithAppId:SDKKey:
+  if ([self.engine respondsToSelector:@selector(activeWithAppId:SDKKey:)]) {
+    return [self.engine activeWithAppId:appId SDKKey:sdkKey];
   }
 
   // 若你的版本是离线激活，请在此处按官方 Demo 替换（比如 activeOffline:）
   return -1;
 }
 
-- (int)initEngineWithDetectMode:(ASF_DETECT_MODE)detectMode
-                 orientPriority:(ASF_OP_0_ONLY)orientPriority
+- (int)initEngineWithDetectMode:(ASF_DetectMode)detectMode
+                 orientPriority:(ASF_OrientPriority)orientPriority
                      maxFaceNum:(int)maxFaceNum
                    combinedMask:(int)combinedMask {
   // 对照 Demo：initEngine
-  int code = [self.engine initWithDetectMode:detectMode
+  self.combinedMask = combinedMask;
+  int code = [self.engine initFaceEngineWithDetectMode:detectMode
                              orientPriority:orientPriority
-                                      scale:16
                                  maxFaceNum:maxFaceNum
                                combinedMask:combinedMask];
   self.inited = (code == MOK);
@@ -61,7 +56,7 @@
 
 - (void)uninit {
   if (self.inited) {
-    [self.engine unInit];
+    [self.engine unInitFaceEngine];
     self.inited = NO;
   }
 }
@@ -69,10 +64,45 @@
 - (NSArray<NSDictionary *> *)detectFaces:(ASVLOFFSCREEN *)offscreen {
   if (!self.inited || offscreen == NULL) return @[];
 
-  NSArray<ArcSoftFaceInfo *> *faces = [self.engine detectFaces:offscreen];
-  NSMutableArray *out = [NSMutableArray arrayWithCapacity:faces.count];
-  for (ArcSoftFaceInfo *f in faces) {
-    MRECT r = f.faceRect;
+  ASF_MultiFaceInfo faces = {0};
+  MRESULT result = [self.engine detectFacesWithWidth:offscreen->i32Width
+                                              height:offscreen->i32Height
+                                                data:offscreen->ppu8Plane[0]
+                                              format:offscreen->u32PixelArrayFormat
+                                             faceRes:&faces];
+
+  if (result != MOK) {
+      return @[];
+  }
+
+  // Cache 3D angles
+  NSMutableArray *angles = [NSMutableArray arrayWithCapacity:faces.faceNum];
+  if (faces.face3DAngleInfo.yaw && faces.face3DAngleInfo.pitch && faces.face3DAngleInfo.roll) {
+      for (int i = 0; i < faces.faceNum; i++) {
+          [angles addObject:@{
+              @"yaw": @(faces.face3DAngleInfo.yaw[i]),
+              @"pitch": @(faces.face3DAngleInfo.pitch[i]),
+              @"roll": @(faces.face3DAngleInfo.roll[i]),
+              @"status": @(0) // Status removed in new SDK
+          }];
+      }
+  }
+  self.lastFace3DAngles = angles;
+
+  // Process Age, Gender, Liveness if requested
+  int processMask = self.combinedMask & (ASF_AGE | ASF_GENDER | ASF_LIVENESS);
+  if (processMask != 0 && faces.faceNum > 0) {
+      [self.engine processWithWidth:offscreen->i32Width
+                             height:offscreen->i32Height
+                               data:offscreen->ppu8Plane[0]
+                             format:offscreen->u32PixelArrayFormat
+                            faceRes:&faces
+                               mask:processMask];
+  }
+
+  NSMutableArray *out = [NSMutableArray arrayWithCapacity:faces.faceNum];
+  for (int i = 0; i < faces.faceNum; i++) {
+    MRECT r = faces.faceRect[i];
     [out addObject:@{
       @"rect": @{
         @"left": @(r.left),
@@ -80,7 +110,7 @@
         @"right": @(r.right),
         @"bottom": @(r.bottom),
       },
-      @"orient": @(f.faceOrient),
+      @"orient": @(faces.faceOrient[i]),
     }];
   }
   return out;
@@ -91,68 +121,77 @@
                       orient:(int)orient {
   if (!self.inited || offscreen == NULL) return nil;
 
-  ArcSoftFaceInfo *info = [[ArcSoftFaceInfo alloc] init];
+  ASF_SingleFaceInfo info = {0};
   info.faceRect = rect;
   info.faceOrient = orient;
 
-  ArcSoftFaceFeature *feature = [self.engine extractFaceFeature:offscreen faceInfo:info];
-  if (!feature || feature.featureSize <= 0 || feature.featureData == NULL) return nil;
+  ASF_FaceFeature feature = {0};
+  MRESULT result = [self.engine extractFaceFeatureWithWidth:offscreen->i32Width
+                                                     height:offscreen->i32Height
+                                                       data:offscreen->ppu8Plane[0]
+                                                     format:offscreen->u32PixelArrayFormat
+                                                   faceInfo:&info
+                                                    feature:&feature];
 
-  NSData *data = [NSData dataWithBytes:feature.featureData length:(NSUInteger)feature.featureSize];
+  if (result != MOK || feature.featureSize <= 0 || feature.feature == NULL) return nil;
+
+  NSData *data = [NSData dataWithBytes:feature.feature length:(NSUInteger)feature.featureSize];
   return [data base64EncodedStringWithOptions:0];
 }
 
 - (float)compareFeature1:(NSData *)f1 feature2:(NSData *)f2 {
   if (!self.inited || !f1 || !f2) return 0.f;
 
-  ArcSoftFaceFeature *ff1 = [[ArcSoftFaceFeature alloc] init];
+  ASF_FaceFeature ff1 = {0};
   ff1.featureSize = (int)f1.length;
-  ff1.featureData = (MByte *)f1.bytes;
+  ff1.feature = (MByte *)f1.bytes;
 
-  ArcSoftFaceFeature *ff2 = [[ArcSoftFaceFeature alloc] init];
+  ASF_FaceFeature ff2 = {0};
   ff2.featureSize = (int)f2.length;
-  ff2.featureData = (MByte *)f2.bytes;
+  ff2.feature = (MByte *)f2.bytes;
 
-  return [self.engine compareFaceFeature:ff1 feature2:ff2];
+  MFloat confidenceLevel = 0.0;
+  [self.engine compareFaceWithFeature:&ff1 feature2:&ff2 confidenceLevel:&confidenceLevel];
+  return confidenceLevel;
 }
 
 - (NSArray<NSNumber *> *)getAges {
   if (!self.inited) return @[];
-  NSArray<ArcSoftAgeInfo *> *infos = [self.engine getAge];
-  NSMutableArray *arr = [NSMutableArray arrayWithCapacity:infos.count];
-  for (ArcSoftAgeInfo *i in infos) {
-    [arr addObject:@(i.age)];
+  ASF_AgeInfo infos = {0};
+  [self.engine getAge:&infos];
+
+  NSMutableArray *arr = [NSMutableArray arrayWithCapacity:infos.num];
+  for (int i = 0; i < infos.num; i++) {
+    [arr addObject:@(infos.ageArray[i])];
   }
   return arr;
 }
 
 - (NSArray<NSNumber *> *)getGenders {
   if (!self.inited) return @[];
-  NSArray<ArcSoftGenderInfo *> *infos = [self.engine getGender];
-  NSMutableArray *arr = [NSMutableArray arrayWithCapacity:infos.count];
-  for (ArcSoftGenderInfo *i in infos) {
+  ASF_GenderInfo infos = {0};
+  [self.engine getGender:&infos];
+
+  NSMutableArray *arr = [NSMutableArray arrayWithCapacity:infos.num];
+  for (int i = 0; i < infos.num; i++) {
     // 0未知 1男 2女 (按 SDK 枚举可自行映射)
-    [arr addObject:@(i.gender)];
+    [arr addObject:@(infos.genderArray[i])];
   }
   return arr;
 }
 
 - (NSArray<NSDictionary *> *)getFace3DAngles {
-  if (!self.inited) return @[];
-  NSArray<ArcSoftFace3DAngle *> *infos = [self.engine getFace3DAngle];
-  NSMutableArray *arr = [NSMutableArray arrayWithCapacity:infos.count];
-  for (ArcSoftFace3DAngle *a in infos) {
-    [arr addObject:@{ @"yaw": @(a.yaw), @"pitch": @(a.pitch), @"roll": @(a.roll), @"status": @(a.status) }];
-  }
-  return arr;
+  return self.lastFace3DAngles ?: @[];
 }
 
 - (NSArray<NSNumber *> *)getLiveness {
   if (!self.inited) return @[];
-  NSArray<ArcSoftLivenessInfo *> *infos = [self.engine getLiveness];
-  NSMutableArray *arr = [NSMutableArray arrayWithCapacity:infos.count];
-  for (ArcSoftLivenessInfo *l in infos) {
-    [arr addObject:@(l.liveness)];
+  ASF_LivenessInfo infos = {0};
+  [self.engine getLiveness:&infos];
+
+  NSMutableArray *arr = [NSMutableArray arrayWithCapacity:infos.num];
+  for (int i = 0; i < infos.num; i++) {
+    [arr addObject:@(infos.isLive[i])];
   }
   return arr;
 }

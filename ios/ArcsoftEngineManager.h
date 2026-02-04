@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <ArcSoftFaceEngine/ArcSoftFaceEngine.h>
 #import <ArcSoftFaceEngine/asvloffscreen.h>
+#import <ArcSoftFaceEngine/ArcSoftFaceEngineDefine.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -26,8 +27,8 @@ NS_ASSUME_NONNULL_BEGIN
 ///   - orientPriority: 方向优先级
 ///   - maxFaceNum: 最大人脸数
 ///   - combinedMask: 能力掩码（比如 ASF_FACE_DETECT | ASF_FACERECOGNITION | ASF_AGE ...）
-- (int)initEngineWithDetectMode:(ASF_DETECT_MODE)detectMode
-                 orientPriority:(ASF_OP_0_ONLY)orientPriority
+- (int)initEngineWithDetectMode:(ASF_DetectMode)detectMode
+                 orientPriority:(ASF_OrientPriority)orientPriority
                      maxFaceNum:(int)maxFaceNum
                    combinedMask:(int)combinedMask;
 

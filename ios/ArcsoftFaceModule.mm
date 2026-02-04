@@ -9,6 +9,7 @@
 
 #import "ArcsoftEngineManager.h"
 #import "ArcsoftFaceDB.h"
+#import "PixelBufferUtils.h"
 
 /// 注意：不打包 ArcSoftFaceEngine.framework，本插件只引用其头文件。
 /// 你需要在 App 工程里按官方文档把 ArcSoftFaceEngine.framework 加入：
@@ -109,6 +110,63 @@ static NSString * Base64FromData(NSData *data) {
   return [data base64EncodedStringWithOptions:0];
 }
 
+// Helper to create ASVLOFFSCREEN from raw bytes
+static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSString *formatStr) {
+    ASVLOFFSCREEN offscreen = {0};
+    offscreen.i32Width = width;
+    offscreen.i32Height = height;
+
+    // Default to NV21 if not specified or unknown
+    // Note: iOS usually uses NV12 or BGRA. Android uses NV21.
+    // If data comes from JS, it might be raw bytes.
+    // We need to map format string to ASVL format.
+
+    if ([formatStr isEqualToString:@"NV21"]) {
+        offscreen.u32PixelArrayFormat = ASVL_PAF_NV21;
+        offscreen.pi32Pitch[0] = width;
+        offscreen.pi32Pitch[1] = width;
+
+        // NV21: Y plane + VU plane
+        // Y size = w * h
+        // VU size = w * h / 2
+
+        // We need to be careful about memory management here.
+        // The data.bytes pointer is valid as long as data is valid.
+        // Since we use it synchronously in the method call, it should be fine.
+        // However, ASVLOFFSCREEN expects mutable pointers (MUInt8*), but NSData.bytes is const void*.
+        // We cast it, but we must ensure we don't modify it if it's immutable data.
+        // ArcSoft engine usually only reads for detection.
+
+        MUInt8 *bytes = (MUInt8 *)data.bytes;
+        offscreen.ppu8Plane[0] = bytes;
+        offscreen.ppu8Plane[1] = bytes + (width * height);
+    } else if ([formatStr isEqualToString:@"NV12"]) {
+        offscreen.u32PixelArrayFormat = ASVL_PAF_NV12;
+        offscreen.pi32Pitch[0] = width;
+        offscreen.pi32Pitch[1] = width;
+
+        MUInt8 *bytes = (MUInt8 *)data.bytes;
+        offscreen.ppu8Plane[0] = bytes;
+        offscreen.ppu8Plane[1] = bytes + (width * height);
+    } else if ([formatStr isEqualToString:@"RGB"]) {
+        // Assuming RGB24
+        offscreen.u32PixelArrayFormat = ASVL_PAF_RGB24_B8G8R8; // Check endianness/order
+        offscreen.pi32Pitch[0] = width * 3;
+        offscreen.ppu8Plane[0] = (MUInt8 *)data.bytes;
+    } else {
+        // Fallback or error
+        offscreen.u32PixelArrayFormat = ASVL_PAF_NV21;
+        offscreen.pi32Pitch[0] = width;
+        offscreen.pi32Pitch[1] = width;
+        MUInt8 *bytes = (MUInt8 *)data.bytes;
+        offscreen.ppu8Plane[0] = bytes;
+        offscreen.ppu8Plane[1] = bytes + (width * height);
+    }
+
+    return offscreen;
+}
+
+
 #pragma mark - Public API (aligned with TS spec)
 
 RCT_EXPORT_METHOD(activateOnline:(NSString *)appId
@@ -118,12 +176,11 @@ RCT_EXPORT_METHOD(activateOnline:(NSString *)appId
 {
   asf_logI(@"activateOnline appIdLen=%lu", (unsigned long)appId.length);
 
-  // iOS SDK：在线激活接口在 ArcSoftFaceEngine.h
-  MRESULT code = [ArcSoftFaceEngine activeOnlineWithAppId:appId sdkKey:sdkKey];
-  if (code == MOK) {
+  int code = [self.engineManager activateWithAppId:appId sdkKey:sdkKey activeKey:nil];
+  if (code == MOK || code == MERR_ASF_ALREADY_ACTIVATED) {
     resolve(@(YES));
   } else {
-    reject(@"ACTIVATE_FAILED", [NSString stringWithFormat:@"ArcSoft iOS activateOnline failed: %d", (int)code], nil);
+    reject(@"ACTIVATE_FAILED", [NSString stringWithFormat:@"ArcSoft iOS activateOnline failed: %d", code], nil);
   }
 }
 
@@ -133,15 +190,40 @@ RCT_EXPORT_METHOD(initEngine:(NSDictionary *)options
 {
   asf_logI(@"initEngine options=%@", options);
 
-  NSString *appId = options[@"appId"] ?: @"";
-  NSString *sdkKey = options[@"sdkKey"] ?: @"";
-  NSNumber *mask = options[@"combinedMask"] ?: @(ASF_FACE_DETECT);
+  // Default values
+  ASF_DetectMode detectMode = ASF_DETECT_MODE_IMAGE;
+  ASF_OrientPriority orientPriority = ASF_OP_0_ONLY;
+  int maxFaceNum = 1;
+  int combinedMask = ASF_FACE_DETECT;
 
-  MRESULT code = [self.engineManager initEngineWithAppId:appId sdkKey:sdkKey combinedMask:[mask intValue]];
+  if (options[@"detectMode"]) {
+      // Map string/number to enum
+      // Assuming TS passes integer or we map string
+      // For simplicity, assuming integer passed from JS matching constants
+      detectMode = (ASF_DetectMode)[options[@"detectMode"] unsignedIntValue];
+  }
+
+  if (options[@"orientPriority"]) {
+      orientPriority = (ASF_OrientPriority)[options[@"orientPriority"] unsignedIntValue];
+  }
+
+  if (options[@"maxFaceNum"]) {
+      maxFaceNum = [options[@"maxFaceNum"] intValue];
+  }
+
+  if (options[@"combinedMask"]) {
+      combinedMask = [options[@"combinedMask"] intValue];
+  }
+
+  int code = [self.engineManager initEngineWithDetectMode:detectMode
+                                           orientPriority:orientPriority
+                                               maxFaceNum:maxFaceNum
+                                             combinedMask:combinedMask];
+
   if (code == MOK) {
     resolve(@(YES));
   } else {
-    reject(@"INIT_FAILED", [NSString stringWithFormat:@"ArcSoft iOS initEngine failed: %d", (int)code], nil);
+    reject(@"INIT_FAILED", [NSString stringWithFormat:@"ArcSoft iOS initEngine failed: %d", code], nil);
   }
 }
 
@@ -150,7 +232,7 @@ RCT_EXPORT_METHOD(unInitEngine:(RCTPromiseResolveBlock)resolve
 {
   asf_logI(@"unInitEngine");
 
-  [self.engineManager unInitEngine];
+  [self.engineManager uninit];
   resolve(@(YES));
 }
 
@@ -170,7 +252,9 @@ RCT_EXPORT_METHOD(detectFaces:(NSDictionary *)image
   int height = [image[@"height"] intValue];
   NSString *formatStr = image[@"format"] ?: @"NV21";
 
-  NSArray<NSDictionary *> *faces = [self.engineManager detectFacesWithData:data width:width height:height format:formatStr];
+  ASVLOFFSCREEN offscreen = OffscreenFromData(data, width, height, formatStr);
+
+  NSArray<NSDictionary *> *faces = [self.engineManager detectFaces:&offscreen];
   resolve(@{ @"faces": faces });
 }
 
@@ -190,12 +274,36 @@ RCT_EXPORT_METHOD(extractFeature:(NSDictionary *)image
   int height = [image[@"height"] intValue];
   NSString *formatStr = image[@"format"] ?: @"NV21";
 
-  NSData *feat = [self.engineManager extractFeatureWithData:data width:width height:height format:formatStr faceIndex:(NSInteger)faceIndex];
-  if (!feat) {
+  // We need to detect faces first to get the rect and orient for the specific face index
+  // Or we assume the caller passed the rect/orient?
+  // The TS spec usually implies we might need to detect or pass rect.
+  // If the API signature is just image + faceIndex, we must detect first.
+
+  ASVLOFFSCREEN offscreen = OffscreenFromData(data, width, height, formatStr);
+  NSArray<NSDictionary *> *faces = [self.engineManager detectFaces:&offscreen];
+
+  if (faceIndex < 0 || faceIndex >= faces.count) {
+      resolve([NSNull null]);
+      return;
+  }
+
+  NSDictionary *face = faces[(NSUInteger)faceIndex];
+  NSDictionary *rectDict = face[@"rect"];
+  MRECT rect = {
+      [rectDict[@"left"] intValue],
+      [rectDict[@"top"] intValue],
+      [rectDict[@"right"] intValue],
+      [rectDict[@"bottom"] intValue]
+  };
+  int orient = [face[@"orient"] intValue];
+
+  NSString *featBase64 = [self.engineManager extractFeature:&offscreen faceRect:rect orient:orient];
+
+  if (!featBase64) {
     resolve([NSNull null]);
     return;
   }
-  resolve(@{ @"dataBase64": Base64FromData(feat) });
+  resolve(@{ @"dataBase64": featBase64 });
 }
 
 RCT_EXPORT_METHOD(compareFeature:(NSDictionary *)f1
@@ -212,7 +320,7 @@ RCT_EXPORT_METHOD(compareFeature:(NSDictionary *)f1
     return;
   }
 
-  float score = [self.engineManager compareFeatureData:d1 with:d2];
+  float score = [self.engineManager compareFeature1:d1 feature2:d2];
   resolve(@(score));
 }
 
@@ -225,27 +333,50 @@ RCT_EXPORT_METHOD(processAttributes:(NSDictionary *)image
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
-  asf_logD(@"processAttributes needAge=%d needGender=%d needLiveness=%d need3DAngle=%d", needAge, needGender, needLiveness, need3DAngle);
+    // This method is a bit complex because process() in ArcSoft usually processes all detected faces
+    // and stores results in the engine. Then we call getAge, getGender etc.
+    // The detectFaces call in this module already calls process() if combinedMask has these bits.
+    // If the user calls this method, they might expect us to run process() again or just return cached values.
+    // However, since detectFaces updates the cache (in our implementation of ArcsoftEngineManager),
+    // we can just return the values if they are available.
+    // BUT, if this is a separate call with a new image, we must detect and process again.
 
-  NSData *data = DataFromBase64(image[@"data"]);
-  if (!data) {
-    reject(@"BAD_IMAGE", @"image.data (base64) is required", nil);
-    return;
-  }
-  int width = [image[@"width"] intValue];
-  int height = [image[@"height"] intValue];
-  NSString *formatStr = image[@"format"] ?: @"NV21";
+    // Assuming this call provides an image, we should run detection and processing.
 
-  NSDictionary *out = [self.engineManager processAttributesWithData:data
-                                                             width:width
-                                                            height:height
-                                                            format:formatStr
-                                                       faceIndexes:faceIndexes
-                                                           needAge:needAge
-                                                        needGender:needGender
-                                                      needLiveness:needLiveness
-                                                       need3DAngle:need3DAngle];
-  resolve(out);
+    NSData *data = DataFromBase64(image[@"data"]);
+    if (!data) {
+      reject(@"BAD_IMAGE", @"image.data (base64) is required", nil);
+      return;
+    }
+    int width = [image[@"width"] intValue];
+    int height = [image[@"height"] intValue];
+    NSString *formatStr = image[@"format"] ?: @"NV21";
+
+    ASVLOFFSCREEN offscreen = OffscreenFromData(data, width, height, formatStr);
+
+    // We need to ensure the engine is initialized with proper mask for these attributes.
+    // If not, process() might fail or do nothing for those attributes.
+    // For now, we assume initEngine was called with sufficient mask.
+
+    // Run detection (which also runs process if mask is set in our Manager)
+    [self.engineManager detectFaces:&offscreen];
+
+    NSMutableDictionary *result = [NSMutableDictionary dictionary];
+
+    if (needAge) {
+        result[@"ages"] = [self.engineManager getAges];
+    }
+    if (needGender) {
+        result[@"genders"] = [self.engineManager getGenders];
+    }
+    if (needLiveness) {
+        result[@"liveness"] = [self.engineManager getLiveness];
+    }
+    if (need3DAngle) {
+        result[@"angles"] = [self.engineManager getFace3DAngles];
+    }
+
+    resolve(result);
 }
 
 RCT_EXPORT_METHOD(dbUpsert:(NSString *)userId
@@ -261,18 +392,7 @@ RCT_EXPORT_METHOD(dbUpsert:(NSString *)userId
     return;
   }
 
-  // iOS：用 ArcSoftFaceFeature 结构体封装 bytes
-  ArcSoftFaceFeature *f = [[ArcSoftFaceFeature alloc] init];
-  // ArcSoftFaceFeature 的 bytes setter 在 SDK 内部实现；这里用 initWithData
-  // 若你的 SDK 版本没有该 init，请按 Demo 的 featureInfo.feature 赋值方式改。
-  if ([f respondsToSelector:@selector(setFeatureData:)]) {
-    [f performSelector:@selector(setFeatureData:) withObject:d];
-  } else {
-    // 兜底：用 KVC 试图写入
-    @try { [f setValue:d forKey:@"featureData"]; } @catch(__unused NSException *e) {}
-  }
-
-  [self.faceDB upsertFeature:f forUserId:userId];
+  [self.faceDB upsertFeatureData:d forUserId:userId];
   resolve(@(YES));
 }
 

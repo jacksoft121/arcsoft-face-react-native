@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 
 #ifdef RCT_NEW_ARCH_ENABLED
-#import "NativeArcsoftFaceSpec.h"
+#import "ArcSoftFaceReactNativeSpec.h"
 @interface ArcsoftFaceModule : NSObject <NativeArcsoftFaceSpec>
 @end
 #else
@@ -9,4 +9,3 @@
 @interface ArcsoftFaceModule : NSObject <RCTBridgeModule>
 @end
 #endif
-
