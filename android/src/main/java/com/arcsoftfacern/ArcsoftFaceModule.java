@@ -24,6 +24,8 @@ import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
 
+import org.json.JSONObject;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -175,26 +177,37 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
   }
 
   @ReactMethod
-  public void initEngine(ReadableMap options, Promise promise) {
+  public void initEngine(String optionsJson, Promise promise) {
     long t0 = System.currentTimeMillis();
-    Log.i(TAG, "initEngine(options=" + (options == null ? "null" : options.toString()) + ")");
+    Log.i(TAG, "initEngine(json=" + optionsJson + ")");
     try {
-      String detectModeStr = options.hasKey("detectMode") ? options.getString("detectMode") : "video";
+      String detectModeStr = "video";
+      int maxFaceNum = 5;
+      boolean enableAge = false;
+      boolean enableGender = false;
+      boolean enableLiveness = false;
+      boolean enable3DAngle = false;
+
+      if (optionsJson != null) {
+        try {
+          JSONObject json = new JSONObject(optionsJson);
+          if (json.has("detectMode")) detectModeStr = json.getString("detectMode");
+          if (json.has("maxFaceNum")) maxFaceNum = json.getInt("maxFaceNum");
+          if (json.has("enableAge")) enableAge = json.getBoolean("enableAge");
+          if (json.has("enableGender")) enableGender = json.getBoolean("enableGender");
+          if (json.has("enableLiveness")) enableLiveness = json.getBoolean("enableLiveness");
+          if (json.has("enable3DAngle")) enable3DAngle = json.getBoolean("enable3DAngle");
+        } catch (Exception e) {
+          Log.w(TAG, "initEngine: failed to parse JSON string", e);
+        }
+      }
+
       DetectMode detectMode = "image".equalsIgnoreCase(detectModeStr) ? DetectMode.ASF_DETECT_MODE_IMAGE : DetectMode.ASF_DETECT_MODE_VIDEO;
-
-      int maxFaceNum = options.hasKey("maxFaceNum") ? options.getInt("maxFaceNum") : 5;
-
-      boolean enableAge = options.hasKey("enableAge") && options.getBoolean("enableAge");
-      boolean enableGender = options.hasKey("enableGender") && options.getBoolean("enableGender");
-      boolean enableLiveness = options.hasKey("enableLiveness") && options.getBoolean("enableLiveness");
-      boolean enable3DAngle = options.hasKey("enable3DAngle") && options.getBoolean("enable3DAngle");
 
       int combinedMask = FaceEngine.ASF_FACE_DETECT | FaceEngine.ASF_FACE_RECOGNITION;
       if (enableAge) combinedMask |= FaceEngine.ASF_AGE;
       if (enableGender) combinedMask |= FaceEngine.ASF_GENDER;
       if (enableLiveness) combinedMask |= FaceEngine.ASF_LIVENESS;
-
-      // 3D angle: usually comes in FaceInfo; keep flag only for TS compatibility
 
       int code = engineManager.initEngine(
               detectMode,

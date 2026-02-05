@@ -22,6 +22,7 @@ import {useResizePlugin} from 'vision-camera-resize-plugin';
 import {runOnJS} from 'react-native-reanimated';
 
 import {
+  setLogLevel,
   activateOnline,
   initEngine,
   unInitEngine,
@@ -64,8 +65,10 @@ export default function TestScreen() {
   const [inited, setInited] = useState(false);
 
   // 你换成自己的 appId/sdkKey
-  const [appId, setAppId] = useState('');
-  const [sdkKey, setSdkKey] = useState('');
+  const [appId, setAppId] = useState('2x7amHG5D2zXGPPunjSyV5kmhfktrivFujNSKpq1BLmD');
+  const [sdkKey, setSdkKey] = useState(Platform.OS === 'ios' ? 'FB9snd8iQpexkynHwgUpC9h8DtRcm1oLqzJ6dy3JT3HA' : '2x7amHG5D2zXGPPunjSyV5kmhfktrivFujNSKpq1BLmD');
+
+
 
   // 人脸库测试
   const [userId, setUserId] = useState('u_001');
@@ -75,6 +78,7 @@ export default function TestScreen() {
   const [lastFaceCount, setLastFaceCount] = useState(0);
   const [attrs, setAttrs] = useState<AttrState>({});
   const [log, setLog] = useState<string>('');
+
 
   // 保存一份 feature 用于对比/注册
   const lastFeatureRef = useRef<FaceFeature | null>(null);
@@ -90,16 +94,19 @@ export default function TestScreen() {
   useEffect(() => {
     if (!hasPermission) requestPermission();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, []);
 
   const doActivate = useCallback(async () => {
     try {
+      await setLogLevel(5); // VERBOSE
       const ok = await activateOnline(appId.trim(), sdkKey.trim());
       setActivated(ok);
       appendLog(`activateOnline => ${ok}`);
       if (!ok) Alert.alert('激活失败', '请确认 appId/sdkKey 是否正确。');
     } catch (e: any) {
       appendLog(`activateOnline error: ${String(e?.message || e)}`);
+      console.error(`activateOnline error: ${String(e?.message || e)}`);
       Alert.alert('激活异常', String(e?.message || e));
     }
   }, [appId, sdkKey, appendLog]);
@@ -148,84 +155,84 @@ export default function TestScreen() {
   }, [appendLog]);
 
   const onNv21Frame = useCallback(
-    async (nv21: number[], width: number, height: number) => {
-      if (!inited) return;
+      async (nv21: number[], width: number, height: number) => {
+        if (!inited) return;
 
-      try {
-        // 1) 检测
-        const faces = await detectFacesNV21(nv21, width, height);
-        setLastFaceCount(faces.length);
+        try {
+          // 1) 检测
+          const faces = await detectFacesNV21(nv21, width, height);
+          setLastFaceCount(faces.length);
 
-        if (!faces.length) {
-          lastFeatureRef.current = null;
-          lastFaceRef.current = null;
-          return;
+          if (!faces.length) {
+            lastFeatureRef.current = null;
+            lastFaceRef.current = null;
+            return;
+          }
+
+          // 取第一张脸
+          const face = faces[0];
+          lastFaceRef.current = face;
+
+          // 2) 提特征
+          const feature = await extractFeatureNV21(nv21, width, height, face);
+          if (feature) lastFeatureRef.current = feature;
+
+          // 3) 年龄 / 性别 / 活体 / 3D角（按你 TS API 分开取）
+          // 这些函数是否需要 faces 参数，取决于你 native 的实现；你现在基线里是 (nv21,w,h,faces)
+          const ageArr = await getAgeNV21(nv21, width, height, faces);
+          const genderArr = await getGenderNV21(nv21, width, height, faces);
+          const liveArr = await getLivenessNV21(nv21, width, height, faces);
+          const angleArr = await getFace3DAngleNV21(nv21, width, height, faces);
+
+          setAttrs({
+            age: ageArr?.[0],
+            gender: genderArr?.[0],
+            liveness: liveArr?.[0],
+            yaw: angleArr?.[0]?.yaw,
+            pitch: angleArr?.[0]?.pitch,
+            roll: angleArr?.[0]?.roll,
+          });
+        } catch (e: any) {
+          appendLog(`frame error: ${String(e?.message || e)}`);
         }
-
-        // 取第一张脸
-        const face = faces[0];
-        lastFaceRef.current = face;
-
-        // 2) 提特征
-        const feature = await extractFeatureNV21(nv21, width, height, face);
-        if (feature) lastFeatureRef.current = feature;
-
-        // 3) 年龄 / 性别 / 活体 / 3D角（按你 TS API 分开取）
-        // 这些函数是否需要 faces 参数，取决于你 native 的实现；你现在基线里是 (nv21,w,h,faces)
-        const ageArr = await getAgeNV21(nv21, width, height, faces);
-        const genderArr = await getGenderNV21(nv21, width, height, faces);
-        const liveArr = await getLivenessNV21(nv21, width, height, faces);
-        const angleArr = await getFace3DAngleNV21(nv21, width, height, faces);
-
-        setAttrs({
-          age: ageArr?.[0],
-          gender: genderArr?.[0],
-          liveness: liveArr?.[0],
-          yaw: angleArr?.[0]?.yaw,
-          pitch: angleArr?.[0]?.pitch,
-          roll: angleArr?.[0]?.roll,
-        });
-      } catch (e: any) {
-        appendLog(`frame error: ${String(e?.message || e)}`);
-      }
-    },
-    [appendLog, inited],
+      },
+      [appendLog, inited],
   );
 
   // FrameProcessor：把 camera frame 转成 NV21
   const frameProcessor = useFrameProcessor(
-    (frame: Frame) => {
-      'worklet';
-      if (!resize) return;
-
-      runAtTargetFps(5, () => {
+      (frame: Frame) => {
         'worklet';
-        try {
-          // resize-plugin 的不同版本返回结构不同：
-          // 常见是 { width, height, bytes } 或直接 Uint8Array
-          const out: any = resize(frame, {
-            scale: {width: 480, height: 640},
-            pixelFormat: 'yuv', // 期望 NV21/YUV
-            dataType: 'uint8',
-          });
+        if (!resize) return;
 
-          const w = out?.width ?? 480;
-          const h = out?.height ?? 640;
-          const bytes: any = out?.bytes ?? out;
+        runAtTargetFps(5, () => {
+          'worklet';
+          try {
+            // resize-plugin 的不同版本返回结构不同：
+            // 常见是 { width, height, bytes } 或直接 Uint8Array
+            const out: any = resize(frame, {
+              scale: {width: 480, height: 640},
+              pixelFormat: 'yuv', // 期望 NV21/YUV
+              dataType: 'uint8',
+            });
 
-          // bytes 期望是 Uint8Array
-          if (!bytes || !bytes.length) return;
+            const w = out?.width ?? 480;
+            const h = out?.height ?? 640;
+            const bytes: any = out?.bytes ?? out;
 
-          // worklet 里转 JS 线程：Array.from(Uint8Array)
-          // 注意：这是为了“验证插件能力”的测试写法，不建议生产一直这样跑
-          const arr = Array.from(bytes as any);
-          runOnJS(onNv21Frame)(arr, w, h);
-        } catch (e) {
-          // ignore in worklet
-        }
-      });
-    },
-    [resize, onNv21Frame],
+            // bytes 期望是 Uint8Array
+            if (!bytes || !bytes.length) return;
+
+            // worklet 里转 JS 线程：Array.from(Uint8Array)
+            // 注意：这是为了“验证插件能力”的测试写法，不建议生产一直这样跑
+            const arr = Array.from(bytes as any);
+            runOnJS(onNv21Frame)(arr, w, h);
+          } catch (e) {
+            // ignore in worklet
+          }
+        });
+      },
+      [resize, onNv21Frame],
   );
 
   const canUseCamera = useMemo(() => {
@@ -284,122 +291,124 @@ export default function TestScreen() {
   }, [refreshDBCount]);
 
   return (
-    <SafeAreaView style={styles.root}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>ArcSoft Face RN 插件验证页</Text>
+      <SafeAreaView style={styles.root}>
+        <ScrollView contentContainerStyle={styles.container}>
+          <Text style={styles.title}>ArcSoft Face RN 插件验证页</Text>
 
-        <View style={styles.card}>
-          <Text style={styles.h2}>1) SDK 激活（online）</Text>
-          <View style={styles.row}>
-            <Text style={styles.label}>appId</Text>
-            <TextInput
-              value={appId}
-              onChangeText={setAppId}
-              placeholder="你的 appId"
-              style={styles.input}
-              autoCapitalize="none"
-            />
-          </View>
-          <View style={styles.row}>
-            <Text style={styles.label}>sdkKey</Text>
-            <TextInput
-              value={sdkKey}
-              onChangeText={setSdkKey}
-              placeholder="你的 sdkKey"
-              style={styles.input}
-              autoCapitalize="none"
-            />
-          </View>
-
-          <View style={styles.btnRow}>
-            <TouchableOpacity style={styles.btn} onPress={doActivate}>
-              <Text style={styles.btnText}>激活</Text>
-            </TouchableOpacity>
-            <Text style={styles.badge}>{activated ? '已激活' : '未激活'}</Text>
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.h2}>2) Engine init / uninit</Text>
-          <View style={styles.btnRow}>
-            <TouchableOpacity style={styles.btn} onPress={doInit}>
-              <Text style={styles.btnText}>initEngine</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.btnOutline} onPress={doUnInit}>
-              <Text style={styles.btnOutlineText}>unInitEngine</Text>
-            </TouchableOpacity>
-            <Text style={styles.badge}>{inited ? '已初始化' : '未初始化'}</Text>
-          </View>
-          <Text style={styles.note}>
-            combinedMask 在你的 TS 层已改成对象参数：enableAge/enableGender/enableLiveness/enable3DAngle
-          </Text>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.h2}>3) Camera / Detect / Attribute</Text>
-          {canUseCamera ? (
-            <View style={styles.previewWrap}>
-              <Camera
-                style={styles.preview}
-                device={device!}
-                isActive={inited}
-                pixelFormat="yuv"
-                frameProcessor={frameProcessor}
-                frameProcessorFps={5}
+          <View style={styles.card}>
+            <Text style={styles.h2}>1) SDK 激活（online）</Text>
+            <View style={styles.row}>
+              <Text style={styles.label}>appId</Text>
+              <TextInput
+                  value={appId}
+                  onChangeText={setAppId}
+                  placeholder="你的 appId"
+                  style={styles.input}
+                  autoCapitalize="none"
+                  multiline
               />
             </View>
-          ) : (
-            <Text style={styles.note}>相机不可用：请确认权限 / 设备。</Text>
-          )}
+            <View style={styles.row}>
+              <Text style={styles.label}>sdkKey</Text>
+              <TextInput
+                  value={sdkKey}
+                  onChangeText={setSdkKey}
+                  placeholder="你的 sdkKey"
+                  style={styles.input}
+                  autoCapitalize="none"
+                  multiline
+              />
+            </View>
 
-          <Text style={styles.kv}>检测到人脸数：{lastFaceCount}</Text>
-          <Text style={styles.kv}>年龄：{attrs.age ?? '-'}</Text>
-          <Text style={styles.kv}>性别：{attrs.gender ?? '-'}</Text>
-          <Text style={styles.kv}>活体：{attrs.liveness ?? '-'}</Text>
-          <Text style={styles.kv}>
-            3D角：yaw={attrs.yaw ?? '-'} pitch={attrs.pitch ?? '-'} roll={attrs.roll ?? '-'}
-          </Text>
-
-          <View style={styles.btnRow}>
-            <TouchableOpacity style={styles.btn} onPress={doCompare}>
-              <Text style={styles.btnText}>自对比(Feature)</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.h2}>4) 人脸库（内存）注册 / 检索</Text>
-          <View style={styles.row}>
-            <Text style={styles.label}>userId</Text>
-            <TextInput value={userId} onChangeText={setUserId} style={styles.input} />
+            <View style={styles.btnRow}>
+              <TouchableOpacity style={styles.btn} onPress={doActivate}>
+                <Text style={styles.btnText}>激活</Text>
+              </TouchableOpacity>
+              <Text style={styles.badge}>{activated ? '已激活' : '未激活'}</Text>
+            </View>
           </View>
 
-          <Text style={styles.kv}>DB 数量：{dbCount}</Text>
-          <View style={styles.btnRow}>
-            <TouchableOpacity style={styles.btn} onPress={doRegisterToDB}>
-              <Text style={styles.btnText}>注册到DB</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.btn} onPress={doSearchDB}>
-              <Text style={styles.btnText}>检索DB</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.btnOutline} onPress={refreshDBCount}>
-              <Text style={styles.btnOutlineText}>刷新数量</Text>
-            </TouchableOpacity>
+          <View style={styles.card}>
+            <Text style={styles.h2}>2) Engine init / uninit</Text>
+            <View style={styles.btnRow}>
+              <TouchableOpacity style={styles.btn} onPress={doInit}>
+                <Text style={styles.btnText}>initEngine</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.btnOutline} onPress={doUnInit}>
+                <Text style={styles.btnOutlineText}>unInitEngine</Text>
+              </TouchableOpacity>
+              <Text style={styles.badge}>{inited ? '已初始化' : '未初始化'}</Text>
+            </View>
+            <Text style={styles.note}>
+              combinedMask 在你的 TS 层已改成对象参数：enableAge/enableGender/enableLiveness/enable3DAngle
+            </Text>
           </View>
 
-          <Text style={styles.note}>
-            说明：本测试页把 camera 每帧提取到的 feature 作为“当前人脸特征”。先对准人脸，再点“注册”，再点“检索”。
-          </Text>
-        </View>
+          <View style={styles.card}>
+            <Text style={styles.h2}>3) Camera / Detect / Attribute</Text>
+            {canUseCamera ? (
+                <View style={styles.previewWrap}>
+                  <Camera
+                      style={styles.preview}
+                      device={device!}
+                      isActive={inited}
+                      pixelFormat="yuv"
+                      frameProcessor={frameProcessor}
+                      frameProcessorFps={5}
+                  />
+                </View>
+            ) : (
+                <Text style={styles.note}>相机不可用：请确认权限 / 设备。</Text>
+            )}
 
-        <View style={styles.card}>
-          <Text style={styles.h2}>日志</Text>
-          <Text style={styles.log}>{log || '（暂无）'}</Text>
-        </View>
+            <Text style={styles.kv}>检测到人脸数：{lastFaceCount}</Text>
+            <Text style={styles.kv}>年龄：{attrs.age ?? '-'}</Text>
+            <Text style={styles.kv}>性别：{attrs.gender ?? '-'}</Text>
+            <Text style={styles.kv}>活体：{attrs.liveness ?? '-'}</Text>
+            <Text style={styles.kv}>
+              3D角：yaw={attrs.yaw ?? '-'} pitch={attrs.pitch ?? '-'} roll={attrs.roll ?? '-'}
+            </Text>
 
-        <View style={{height: 30}} />
-      </ScrollView>
-    </SafeAreaView>
+            <View style={styles.btnRow}>
+              <TouchableOpacity style={styles.btn} onPress={doCompare}>
+                <Text style={styles.btnText}>自对比(Feature)</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.h2}>4) 人脸库（内存）注册 / 检索</Text>
+            <View style={styles.row}>
+              <Text style={styles.label}>userId</Text>
+              <TextInput value={userId} onChangeText={setUserId} style={styles.input} />
+            </View>
+
+            <Text style={styles.kv}>DB 数量：{dbCount}</Text>
+            <View style={styles.btnRow}>
+              <TouchableOpacity style={styles.btn} onPress={doRegisterToDB}>
+                <Text style={styles.btnText}>注册到DB</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.btn} onPress={doSearchDB}>
+                <Text style={styles.btnText}>检索DB</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.btnOutline} onPress={refreshDBCount}>
+                <Text style={styles.btnOutlineText}>刷新数量</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.note}>
+              说明：本测试页把 camera 每帧提取到的 feature 作为“当前人脸特征”。先对准人脸，再点“注册”，再点“检索”。
+            </Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.h2}>日志</Text>
+            <Text style={styles.log}>{log || '（暂无）'}</Text>
+          </View>
+
+          <View style={{height: 30}} />
+        </ScrollView>
+      </SafeAreaView>
   );
 }
 
@@ -424,6 +433,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: Platform.select({ios: 10, android: 8}),
+    minHeight: 60,
+    textAlignVertical: 'top',
   },
   btnRow: {flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap'},
   btn: {

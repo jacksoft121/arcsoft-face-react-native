@@ -27,18 +27,10 @@ export interface Spec extends TurboModule {
   activateOnline(appId: string, sdkKey: string): Promise<number>;
 
   /**
-   * 初始化引擎（检测/识别/年龄/性别/活体/3D角度等能力开关）
-   * 返回 0 表示成功
+   * 初始化引擎
+   * optionsJson: JSON string of { detectMode, maxFaceNum, ... }
    */
-  initEngine(options?: {
-    detectMode?: 'image' | 'video';
-    maxFaceNum?: number;
-    scale?: number;
-    enableAge?: boolean;
-    enableGender?: boolean;
-    enableLiveness?: boolean;
-    enable3DAngle?: boolean;
-  }): Promise<number>;
+  initEngine(optionsJson: string): Promise<number>;
 
   /** 反初始化引擎，返回 0 表示成功 */
   unInitEngine(): Promise<number>;

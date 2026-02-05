@@ -24,12 +24,12 @@ export const activateOnline = (appId: string, sdkKey: string): Promise<number> =
 
 /** 初始化引擎（返回 0 表示成功） */
 export const initEngine = (options: InitEngineOptions = {}): Promise<number> =>
-    ArcsoftFaceNative.initEngine(options);
+    ArcsoftFaceNative.initEngine(JSON.stringify(options));
 
 /** 反初始化引擎（返回 0 表示成功） */
 export const unInitEngine = (): Promise<number> => ArcsoftFaceNative.unInitEngine();
 
-/** 人脸检测（NV21） */
+/** NV21 输入（跨平台统一输入） */
 export const detectFacesNV21 = (
     nv21: number[],
     width: number,

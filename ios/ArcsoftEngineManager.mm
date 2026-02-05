@@ -20,6 +20,7 @@
     _inited = NO;
     _combinedMask = 0;
     _lastFace3DAngles = @[];
+    NSLog(@"[ArcsoftEngineManager] init: engine=%@", _engine);
   }
   return self;
 }
@@ -27,30 +28,30 @@
 - (int)activateWithAppId:(NSString *)appId
                  sdkKey:(NSString *)sdkKey
               activeKey:(NSString *)activeKey {
-  // 对照 Demo：通常在 App 启动时调用激活接口。
-  // 不同 SDK 版本可能是 online/offline/activeKey 三种方式。
-  // 这里采取“尽可能兼容”的调用：优先带 activeKey（如果框架提供），否则仅 appId+sdkKey。
+  NSLog(@"[ArcsoftEngineManager] activateWithAppId: engine=%@", self.engine);
 
-  // 绝大多数版本都有：activeWithAppId:SDKKey:
-  if ([self.engine respondsToSelector:@selector(activeWithAppId:SDKKey:)]) {
-    return [self.engine activeWithAppId:appId SDKKey:sdkKey];
+  if (!self.engine) {
+      NSLog(@"[ArcsoftEngineManager] Error: engine is nil");
+      return -1;
   }
 
-  // 若你的版本是离线激活，请在此处按官方 Demo 替换（比如 activeOffline:）
-  return -1;
+  // 直接调用，不使用 respondsToSelector，以便发现签名不匹配问题
+  // 注意：根据头文件，方法名是 activeWithAppId:SDKKey:
+  return [self.engine activeWithAppId:appId SDKKey:sdkKey];
 }
 
 - (int)initEngineWithDetectMode:(ASF_DetectMode)detectMode
                  orientPriority:(ASF_OrientPriority)orientPriority
                      maxFaceNum:(int)maxFaceNum
                    combinedMask:(int)combinedMask {
-  // 对照 Demo：initEngine
+  NSLog(@"[ArcsoftEngineManager] initEngineWithDetectMode: mask=%d", combinedMask);
   self.combinedMask = combinedMask;
   int code = [self.engine initFaceEngineWithDetectMode:detectMode
                              orientPriority:orientPriority
                                  maxFaceNum:maxFaceNum
                                combinedMask:combinedMask];
   self.inited = (code == MOK);
+  NSLog(@"[ArcsoftEngineManager] initEngine result: %d", code);
   return code;
 }
 
