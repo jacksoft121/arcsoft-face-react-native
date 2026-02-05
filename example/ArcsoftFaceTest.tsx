@@ -69,8 +69,7 @@ function toScoreText(score: number) {
 export default function TestScreen() {
   const {hasPermission, requestPermission} = useCameraPermission();
   const device = useCameraDevice('front');
-  const resize = useResizePlugin();
-
+  const {resize} = useResizePlugin();
   const [activated, setActivated] = useState(false);
   const [activeInfo, setActiveInfo] = useState<ActiveFileInfo | null>(null);
   const [inited, setInited] = useState(false);
@@ -198,6 +197,7 @@ export default function TestScreen() {
 
   const onNv21Frame = useCallback(
       async (nv21: number[], width: number, height: number) => {
+        console.log("onNv21Frame", nv21.length, width, height);
         if (!inited) return;
 
         try {
@@ -241,36 +241,95 @@ export default function TestScreen() {
       [appendLog, inited],
   );
 
+  function getFrameRotationDegrees(frame: Frame) {
+    'worklet';
+    switch (frame.orientation) {
+      case 'portrait':
+        return 0;
+      case 'portrait-upside-down':
+        return 180;
+      case 'landscape-left':
+        return 90;
+      case 'landscape-right':
+        return 270;
+      default:
+        return 0;
+    }
+  }
+
+  function getDisplayFrameSize(frame: Frame, rotation: number) {
+    'worklet';
+    const w = frame.width;
+    const h = frame.height;
+    if (rotation === 90 || rotation === 270) return {w: h, h: w};
+    return {w, h};
+  }
+
   // FrameProcessor：把 camera frame 转成 NV21
   const frameProcessor = useFrameProcessor(
       (frame: Frame) => {
         'worklet';
         if (!resize) return;
 
-        runAtTargetFps(5, () => {
+        runAtTargetFps(1, () => {
           'worklet';
           try {
+            const isFront = true;
+            console.log("frame", frame.width, frame.height);
             // resize-plugin 的不同版本返回结构不同：
             // 常见是 { width, height, bytes } 或直接 Uint8Array
-            const out: any = resize(frame, {
-              scale: {width: 480, height: 640},
-              pixelFormat: 'yuv', // 期望 NV21/YUV
+            // const out: any = resize(frame, {
+            //   scale: {width: 480, height: 640},
+            //   pixelFormat: 'yuv', // 期望 NV21/YUV
+            //   dataType: 'uint8',
+            // });
+            const rotDegress = getFrameRotationDegrees(frame);
+            const {w: frameW, h: frameH} = getDisplayFrameSize(
+                frame,
+                rotDegress
+            );
+            const rotationResized: string =
+                rotDegress === 90
+                    ? '270deg'
+                    : rotDegress === 180
+                        ? '180deg'
+                        : rotDegress === 270
+                            ? '90deg'
+                            : '0deg';
+
+
+            const pixelFormatResized: 'bgr' | 'rgba' = 'bgr';
+            //todo 按frameW的大小来计算出合适的比例大小，再算出合理的DLX_CONFIG.INSPIREFACE_FILTER_MINIMUM_FACE_PIXEL_SIZE最小人脸大小
+            const scaleSize = frameW;
+            const out = resize(frame, {
+              scale: {width: scaleSize, height: scaleSize},
+              rotation: rotationResized,
+              pixelFormat: pixelFormatResized,
               dataType: 'uint8',
+              mirror: isFront,
             });
 
-            const w = out?.width ?? 480;
-            const h = out?.height ?? 640;
-            const bytes: any = out?.bytes ?? out;
-
+            const w = scaleSize;
+            const h = scaleSize;
+            const bytes = out.buffer;
+            console.log("resize", w, h, out.buffer.byteLength);
             // bytes 期望是 Uint8Array
-            if (!bytes || !bytes.length) return;
+            if (!bytes) return;
 
-            // worklet 里转 JS 线程：Array.from(Uint8Array)
-            // 注意：这是为了“验证插件能力”的测试写法，不建议生产一直这样跑
-            const arr = Array.from(bytes as any);
-            runOnJS(onNv21Frame)(arr, w, h);
+            // 尝试直接使用 new Uint8Array 包装，不依赖 instanceof
+            // @ts-ignore
+            const u8 = new Uint8Array(bytes);
+            console.log("u8 length", u8.length);
+
+            // 只有当长度大于0时才转换
+            if (u8.length > 0) {
+              // @ts-ignore
+              const arr = Array.from(u8);
+              console.log("arr", arr.length);
+              runOnJS(onNv21Frame)(arr, w, h);
+            }
           } catch (e) {
-            // ignore in worklet
+            console.error('Frame processor error:', e);
           }
         });
       },
@@ -470,7 +529,7 @@ export default function TestScreen() {
             <Text style={styles.h2}>5) 人脸库（内存）注册 / 检索</Text>
             <View style={styles.row}>
               <Text style={styles.label}>userId</Text>
-              <TextInput value={userId} onChangeText={setUserId} style={styles.input} />
+              <TextInput value={userId} onChangeText={setUserId} style={styles.input}/>
             </View>
 
             <Text style={styles.kv}>DB 数量：{dbCount}</Text>
@@ -502,7 +561,7 @@ export default function TestScreen() {
             <Text style={styles.log}>{log || '（暂无）'}</Text>
           </View>
 
-          <View style={{height: 30}} />
+          <View style={{height: 30}}/>
         </ScrollView>
       </SafeAreaView>
   );
