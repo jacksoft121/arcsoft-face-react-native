@@ -1,9 +1,12 @@
 package com.arcsoftfacern;
 
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.util.Base64;
 import android.util.Log;
 
+import com.arcsoft.face.ActiveFileInfo;
 import com.arcsoft.face.AgeInfo;
 import com.arcsoft.face.ErrorInfo;
 import com.arcsoft.face.Face3DAngle;
@@ -18,6 +21,9 @@ import com.arcsoft.face.SearchResult;
 import com.arcsoft.face.enums.CompareModel;
 import com.arcsoft.face.enums.DetectFaceOrientPriority;
 import com.arcsoft.face.enums.DetectMode;
+import com.arcsoft.imageutil.ArcSoftImageFormat;
+import com.arcsoft.imageutil.ArcSoftImageUtil;
+import com.arcsoft.imageutil.ArcSoftImageUtilError;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,8 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * ArcSoft FaceEngine lifecycle + helper methods.
- * - Strictly use FaceEngine.CP_PAF_NV21 (2050)
- * - DetectMode / DetectFaceOrientPriority from com.arcsoft.face.enums (per official SDK)
+ * - Supports NV21 (preview) and BGR24 (image)
  */
 public class ArcsoftEngineManager {
 
@@ -112,6 +117,22 @@ public class ArcsoftEngineManager {
     }
   }
 
+  public synchronized ActiveFileInfo getActiveFileInfo() {
+    ActiveFileInfo activeFileInfo = new ActiveFileInfo();
+    try {
+      int code = FaceEngine.getActiveFileInfo(appContext, activeFileInfo);
+      if (code == ErrorInfo.MOK) {
+        return activeFileInfo;
+      } else {
+        w("getActiveFileInfo failed => code=" + code);
+        return null;
+      }
+    } catch (Throwable t) {
+      e("getActiveFileInfo exception", t);
+      return null;
+    }
+  }
+
   public synchronized int initEngine(
           DetectMode detectMode,
           DetectFaceOrientPriority orientPriority,
@@ -158,6 +179,10 @@ public class ArcsoftEngineManager {
     }
   }
 
+  // =========================
+  // NV21 Methods
+  // =========================
+
   public synchronized List<FaceInfo> detectFacesNV21(byte[] nv21, int width, int height) {
     ensureInited();
     long t0 = System.currentTimeMillis();
@@ -186,32 +211,6 @@ public class ArcsoftEngineManager {
     return feature;
   }
 
-  public synchronized float compare(FaceFeature f1, FaceFeature f2) {
-    ensureInited();
-    long t0 = System.currentTimeMillis();
-    v("compare(featureA, featureB)");
-    FaceSimilar similar = new FaceSimilar();
-    int code = engine.compareFaceFeature(f1, f2, CompareModel.LIFE_PHOTO, similar);
-    if (code != ErrorInfo.MOK) {
-      w("compare failed => code=" + code);
-      return 0f;
-    }
-    float score = similar.getScore();
-    d("compare => score=" + score + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
-    return score;
-  }
-
-  public synchronized float compareBase64(String base64A, String base64B) {
-    v("compareBase64(lenA=" + (base64A == null ? 0 : base64A.length()) + ", lenB=" + (base64B == null ? 0 : base64B.length()) + ")");
-    byte[] a = Base64.decode(base64A, Base64.DEFAULT);
-    byte[] b = Base64.decode(base64B, Base64.DEFAULT);
-    return compare(new FaceFeature(a), new FaceFeature(b));
-  }
-
-  /**
-   * Run process() then read age/gender/liveness. 3D is from FaceInfo itself (filled by SDK).
-   * NOTE: Need initEngine combinedMask includes ASF_AGE / ASF_GENDER / ASF_LIVENESS to get meaningful results.
-   */
   public synchronized AttrResult processAttributes(byte[] nv21, int width, int height, List<FaceInfo> faces, int combinedMask) {
     ensureInited();
     long t0 = System.currentTimeMillis();
@@ -222,7 +221,104 @@ public class ArcsoftEngineManager {
       w("processAttributes.process failed => code=" + code);
       return new AttrResult(new int[0], new int[0], new int[0], new float[0], new float[0], new float[0]);
     }
+    return getAttrResult(faces);
+  }
 
+  // =========================
+  // Image (BGR24) Methods
+  // =========================
+
+  private Object[] decodeImage(String base64) {
+    try {
+      byte[] decoded = Base64.decode(base64, Base64.DEFAULT);
+      Bitmap bitmap = BitmapFactory.decodeByteArray(decoded, 0, decoded.length);
+      if (bitmap == null) return null;
+
+      // Align
+      bitmap = ArcSoftImageUtil.getAlignedBitmap(bitmap, true);
+      int w = bitmap.getWidth();
+      int h = bitmap.getHeight();
+
+      byte[] bgr24 = ArcSoftImageUtil.createImageData(w, h, ArcSoftImageFormat.BGR24);
+      int code = ArcSoftImageUtil.bitmapToImageData(bitmap, bgr24, ArcSoftImageFormat.BGR24);
+      if (code != ArcSoftImageUtilError.CODE_SUCCESS) {
+        w("bitmapToImageData failed => " + code);
+        return null;
+      }
+      return new Object[]{ bgr24, w, h };
+    } catch (Throwable t) {
+      e("decodeImage failed", t);
+      return null;
+    }
+  }
+
+  public synchronized List<FaceInfo> detectFacesImage(String base64) {
+    ensureInited();
+    long t0 = System.currentTimeMillis();
+    Object[] img = decodeImage(base64);
+    if (img == null) return new ArrayList<>();
+
+    byte[] bgr24 = (byte[]) img[0];
+    int width = (int) img[1];
+    int height = (int) img[2];
+
+    v("detectFacesImage(w=" + width + ", h=" + height + ")");
+    List<FaceInfo> faces = new ArrayList<>();
+    int code = engine.detectFaces(bgr24, width, height, FaceEngine.CP_PAF_BGR24, faces);
+    if (code != ErrorInfo.MOK) {
+      w("detectFacesImage failed => code=" + code);
+      faces.clear();
+    }
+    d("detectFacesImage => faces=" + faces.size() + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+    return faces;
+  }
+
+  public synchronized FaceFeature extractFeatureImage(String base64, FaceInfo faceInfo) {
+    ensureInited();
+    long t0 = System.currentTimeMillis();
+    Object[] img = decodeImage(base64);
+    if (img == null) return null;
+
+    byte[] bgr24 = (byte[]) img[0];
+    int width = (int) img[1];
+    int height = (int) img[2];
+
+    v("extractFeatureImage(w=" + width + ", h=" + height + ")");
+    FaceFeature feature = new FaceFeature();
+    int code = engine.extractFaceFeature(bgr24, width, height, FaceEngine.CP_PAF_BGR24, faceInfo, feature);
+    if (code != ErrorInfo.MOK) {
+      w("extractFeatureImage failed => code=" + code);
+      return null;
+    }
+    d("extractFeatureImage => ok, cost=" + (System.currentTimeMillis() - t0) + "ms");
+    return feature;
+  }
+
+  public synchronized AttrResult processAttributesImage(String base64, List<FaceInfo> faces, int combinedMask) {
+    ensureInited();
+    long t0 = System.currentTimeMillis();
+    Object[] img = decodeImage(base64);
+    if (img == null) return new AttrResult(new int[0], new int[0], new int[0], new float[0], new float[0], new float[0]);
+
+    byte[] bgr24 = (byte[]) img[0];
+    int width = (int) img[1];
+    int height = (int) img[2];
+
+    v("processAttributesImage(mask=" + combinedMask + ", faces=" + (faces == null ? 0 : faces.size()) + ")");
+
+    int code = engine.process(bgr24, width, height, FaceEngine.CP_PAF_BGR24, faces, combinedMask);
+    if (code != ErrorInfo.MOK) {
+      w("processAttributesImage.process failed => code=" + code);
+      return new AttrResult(new int[0], new int[0], new int[0], new float[0], new float[0], new float[0]);
+    }
+    return getAttrResult(faces);
+  }
+
+  // =========================
+  // Common
+  // =========================
+
+  private AttrResult getAttrResult(List<FaceInfo> faces) {
     // Age
     List<AgeInfo> ageInfos = new ArrayList<>();
     int codeAge = engine.getAge(ageInfos);
@@ -261,10 +357,29 @@ public class ArcsoftEngineManager {
       yaws[i] = (a != null) ? a.getYaw() : 0f;
     }
 
-    d("processAttributes => ages=" + ages.length + ", genders=" + genders.length + ", live=" + liveness.length
-            + ", angle=" + rolls.length + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
-
     return new AttrResult(ages, genders, liveness, rolls, pitchs, yaws);
+  }
+
+  public synchronized float compare(FaceFeature f1, FaceFeature f2) {
+    ensureInited();
+    long t0 = System.currentTimeMillis();
+    v("compare(featureA, featureB)");
+    FaceSimilar similar = new FaceSimilar();
+    int code = engine.compareFaceFeature(f1, f2, CompareModel.LIFE_PHOTO, similar);
+    if (code != ErrorInfo.MOK) {
+      w("compare failed => code=" + code);
+      return 0f;
+    }
+    float score = similar.getScore();
+    d("compare => score=" + score + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+    return score;
+  }
+
+  public synchronized float compareBase64(String base64A, String base64B) {
+    v("compareBase64(lenA=" + (base64A == null ? 0 : base64A.length()) + ", lenB=" + (base64B == null ? 0 : base64B.length()) + ")");
+    byte[] a = Base64.decode(base64A, Base64.DEFAULT);
+    byte[] b = Base64.decode(base64B, Base64.DEFAULT);
+    return compare(new FaceFeature(a), new FaceFeature(b));
   }
 
   // =========================

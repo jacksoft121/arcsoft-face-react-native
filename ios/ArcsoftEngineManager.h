@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 #import <ArcSoftFaceEngine/ArcSoftFaceEngine.h>
 #import <ArcSoftFaceEngine/asvloffscreen.h>
 #import <ArcSoftFaceEngine/ArcSoftFaceEngineDefine.h>
@@ -6,27 +7,20 @@
 NS_ASSUME_NONNULL_BEGIN
 
 /// ArcSoft FaceEngine 生命周期管理（初始化/释放/能力开关）
-/// 逐行对照官方 iOS Demo：engine/ASFVideoProcessor.* / engine/ASFImageProcessor.*
 @interface ArcsoftEngineManager : NSObject
 
 @property(nonatomic, readonly) BOOL inited;
 @property(nonatomic, strong, readonly) ArcSoftFaceEngine *engine;
 
 /// SDK 激活/注册
-/// - Parameters:
-///   - appId: ArcSoft APP_ID
-///   - sdkKey: ArcSoft SDK_KEY (iOS)
-///   - activeKey: ArcSoft ACTIVE_KEY (如你的版本需要)
 - (int)activateWithAppId:(NSString *)appId
                  sdkKey:(NSString *)sdkKey
               activeKey:(nullable NSString *)activeKey;
 
-/// 初始化引擎（IMAGE 模式）
-/// - Parameters:
-///   - detectMode: ASF_DETECT_MODE_IMAGE / ASF_DETECT_MODE_VIDEO
-///   - orientPriority: 方向优先级
-///   - maxFaceNum: 最大人脸数
-///   - combinedMask: 能力掩码（比如 ASF_FACE_DETECT | ASF_FACERECOGNITION | ASF_AGE ...）
+/// 获取激活文件信息
+- (nullable NSDictionary *)getActiveFileInfo;
+
+/// 初始化引擎
 - (int)initEngineWithDetectMode:(ASF_DetectMode)detectMode
                  orientPriority:(ASF_OrientPriority)orientPriority
                      maxFaceNum:(int)maxFaceNum
@@ -34,13 +28,20 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)uninit;
 
-/// 人脸检测
+/// 人脸检测 (视频流)
 - (NSArray<NSDictionary *> *)detectFaces:(ASVLOFFSCREEN *)offscreen;
 
-/// 提取人脸特征（feature base64）
+/// 人脸检测 (图片)
+- (NSArray<NSDictionary *> *)detectFacesFromImage:(UIImage *)image;
+
+/// 提取人脸特征 (视频流)
 - (nullable NSString *)extractFeature:(ASVLOFFSCREEN *)offscreen
                              faceRect:(MRECT)rect
                                orient:(int)orient;
+
+/// 提取人脸特征 (图片)
+- (nullable NSString *)extractFeatureFromImage:(UIImage *)image
+                                      faceInfo:(NSDictionary *)faceInfo;
 
 /// 特征比对
 - (float)compareFeature1:(NSData *)f1 feature2:(NSData *)f2;

@@ -2,9 +2,10 @@ import ArcsoftFaceNative, {
   type FaceRect,
   type FaceInfo,
   type FaceFeature,
+  type ActiveFileInfo,
 } from './spec/NativeArcsoftFace';
 
-export type { FaceRect, FaceInfo, FaceFeature };
+export type { FaceRect, FaceInfo, FaceFeature, ActiveFileInfo };
 
 export type InitEngineOptions = {
   detectMode?: 'image' | 'video';
@@ -21,6 +22,10 @@ export const setLogLevel = (level: number) => ArcsoftFaceNative.setLogLevel(leve
 /** SDK 在线激活（返回 0 表示成功） */
 export const activateOnline = (appId: string, sdkKey: string): Promise<number> =>
     ArcsoftFaceNative.activateOnline(appId, sdkKey);
+
+/** 获取激活文件信息 */
+export const getActiveFileInfo = (): Promise<ActiveFileInfo | null> =>
+    ArcsoftFaceNative.getActiveFileInfo();
 
 /** 初始化引擎（返回 0 表示成功） */
 export const initEngine = (options: InitEngineOptions = {}): Promise<number> =>
@@ -78,6 +83,30 @@ export const getFace3DAngleNV21 = (
 ): Promise<Array<{ roll: number; pitch: number; yaw: number }>> =>
     ArcsoftFaceNative.getFace3DAngleNV21(nv21, width, height, faces);
 
+/** 图片输入 (Base64) */
+export const detectFacesImage = (base64: string): Promise<FaceInfo[]> =>
+    ArcsoftFaceNative.detectFacesImage(base64);
+
+export const extractFeatureImage = (
+    base64: string,
+    face: FaceInfo
+): Promise<FaceFeature | null> => ArcsoftFaceNative.extractFeatureImage(base64, face);
+
+export const getAgeImage = (base64: string, faces: FaceInfo[]): Promise<number[]> =>
+    ArcsoftFaceNative.getAgeImage(base64, faces);
+
+export const getGenderImage = (base64: string, faces: FaceInfo[]): Promise<number[]> =>
+    ArcsoftFaceNative.getGenderImage(base64, faces);
+
+export const getLivenessImage = (base64: string, faces: FaceInfo[]): Promise<number[]> =>
+    ArcsoftFaceNative.getLivenessImage(base64, faces);
+
+export const getFace3DAngleImage = (
+    base64: string,
+    faces: FaceInfo[]
+): Promise<Array<{ roll: number; pitch: number; yaw: number }>> =>
+    ArcsoftFaceNative.getFace3DAngleImage(base64, faces);
+
 /** 人脸库 */
 export const faceDBAdd = (id: string, feature: FaceFeature): Promise<boolean> =>
     ArcsoftFaceNative.faceDBAdd(id, feature);
@@ -100,6 +129,7 @@ export const faceDBSearch = (
 const ArcsoftFace = {
   setLogLevel,
   activateOnline,
+  getActiveFileInfo,
   initEngine,
   unInitEngine,
 
@@ -111,6 +141,13 @@ const ArcsoftFace = {
   getGenderNV21,
   getLivenessNV21,
   getFace3DAngleNV21,
+
+  detectFacesImage,
+  extractFeatureImage,
+  getAgeImage,
+  getGenderImage,
+  getLivenessImage,
+  getFace3DAngleImage,
 
   faceDBAdd,
   faceDBRemove,

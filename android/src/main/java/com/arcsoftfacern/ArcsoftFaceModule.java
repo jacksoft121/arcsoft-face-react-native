@@ -6,12 +6,12 @@ import android.util.Log;
 
 import androidx.annotation.NonNull;
 
+import com.arcsoft.face.ActiveFileInfo;
 import com.arcsoft.face.Face3DAngle;
 import com.arcsoft.face.FaceFeature;
 import com.arcsoft.face.FaceEngine;
 import com.arcsoft.face.FaceInfo;
 import com.arcsoft.face.SearchResult;
-import com.arcsoft.face.ErrorInfo;
 import com.arcsoft.face.enums.DetectFaceOrientPriority;
 import com.arcsoft.face.enums.DetectMode;
 import com.facebook.react.bridge.Arguments;
@@ -33,12 +33,16 @@ import java.util.List;
  * TurboModule JS API alignment:
  * - setLogLevel(level)
  * - activateOnline(appId, sdkKey)
+ * - getActiveFileInfo()
  * - initEngine(options)
  * - unInitEngine()
  * - detectFacesNV21(nv21, width, height) -> FaceInfo[]
  * - extractFeatureNV21(nv21, width, height, face) -> FaceFeature | null
  * - compareFeature(f1, f2) -> number
  * - getAgeNV21/getGenderNV21/getLivenessNV21/getFace3DAngleNV21
+ * - detectFacesImage(base64) -> FaceInfo[]
+ * - extractFeatureImage(base64, face) -> FaceFeature | null
+ * - getAgeImage/getGenderImage/getLivenessImage/getFace3DAngleImage
  * - faceDBAdd/remove/clear/count/search
  */
 public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
@@ -177,6 +181,32 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
   }
 
   @ReactMethod
+  public void getActiveFileInfo(Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "getActiveFileInfo()");
+    try {
+      ActiveFileInfo info = engineManager.getActiveFileInfo();
+      if (info == null) {
+        promise.resolve(null);
+        return;
+      }
+      WritableMap map = Arguments.createMap();
+      map.putString("appId", info.getAppId());
+      map.putString("sdkKey", info.getSdkKey());
+      map.putString("platform", info.getPlatform());
+      map.putString("sdkVersion", info.getSdkVersion());
+      map.putString("fileVersion", info.getFileVersion());
+      map.putString("expireTime", info.getEndTime()); // Use getEndTime for Android
+      map.putString("deviceFingerprint", ""); // Not available on Android
+      Log.d(TAG, "getActiveFileInfo => ok, cost=" + (System.currentTimeMillis() - t0) + "ms");
+      promise.resolve(map);
+    } catch (Throwable t) {
+      Log.e(TAG, "getActiveFileInfo failed", t);
+      promise.reject("getActiveFileInfo_failed", t);
+    }
+  }
+
+  @ReactMethod
   public void initEngine(String optionsJson, Promise promise) {
     long t0 = System.currentTimeMillis();
     Log.i(TAG, "initEngine(json=" + optionsJson + ")");
@@ -238,6 +268,10 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     }
   }
 
+  // =========================
+  // NV21
+  // =========================
+
   @ReactMethod
   public void detectFacesNV21(ReadableArray nv21, int width, int height, Promise promise) {
     long t0 = System.currentTimeMillis();
@@ -275,22 +309,6 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     } catch (Throwable t) {
       Log.e(TAG, "extractFeatureNV21 failed", t);
       promise.reject("extractFeature_failed", t);
-    }
-  }
-
-  @ReactMethod
-  public void compareFeature(ReadableMap f1, ReadableMap f2, Promise promise) {
-    long t0 = System.currentTimeMillis();
-    Log.d(TAG, "compareFeature()");
-    try {
-      String a = f1.getString("dataBase64");
-      String b = f2.getString("dataBase64");
-      float score = engineManager.compareBase64(a, b);
-      Log.d(TAG, "compareFeature => score=" + score + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
-      promise.resolve((double) score);
-    } catch (Throwable t) {
-      Log.e(TAG, "compareFeature failed", t);
-      promise.reject("compareFeature_failed", t);
     }
   }
 
@@ -385,6 +403,150 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     } catch (Throwable t) {
       Log.e(TAG, "getFace3DAngleNV21 failed", t);
       promise.reject("get3DAngle_failed", t);
+    }
+  }
+
+  // =========================
+  // Image (Base64)
+  // =========================
+
+  @ReactMethod
+  public void detectFacesImage(String base64, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "detectFacesImage(len=" + (base64 == null ? 0 : base64.length()) + ")");
+    try {
+      List<FaceInfo> faces = engineManager.detectFacesImage(base64);
+      WritableArray out = Arguments.createArray();
+      for (FaceInfo f : faces) out.pushMap(faceInfoToMap(f));
+      Log.d(TAG, "detectFacesImage => faces=" + faces.size() + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+      promise.resolve(out);
+    } catch (Throwable t) {
+      Log.e(TAG, "detectFacesImage failed", t);
+      promise.reject("detectFacesImage_failed", t);
+    }
+  }
+
+  @ReactMethod
+  public void extractFeatureImage(String base64, ReadableMap face, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "extractFeatureImage()");
+    try {
+      FaceInfo fi = faceInfoFromMap(face);
+      FaceFeature feat = engineManager.extractFeatureImage(base64, fi);
+      if (feat == null || feat.getFeatureData() == null) {
+        Log.w(TAG, "extractFeatureImage => null");
+        promise.resolve(null);
+        return;
+      }
+      WritableMap res = Arguments.createMap();
+      res.putString("dataBase64", Base64.encodeToString(feat.getFeatureData(), Base64.NO_WRAP));
+      Log.d(TAG, "extractFeatureImage => ok, cost=" + (System.currentTimeMillis() - t0) + "ms");
+      promise.resolve(res);
+    } catch (Throwable t) {
+      Log.e(TAG, "extractFeatureImage failed", t);
+      promise.reject("extractFeatureImage_failed", t);
+    }
+  }
+
+  @ReactMethod
+  public void getAgeImage(String base64, ReadableArray faces, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "getAgeImage(faces=" + (faces == null ? 0 : faces.size()) + ")");
+    try {
+      ArcsoftEngineManager.AttrResult r = engineManager.processAttributesImage(
+              base64,
+              faceInfosFromReadableArray(faces),
+              FaceEngine.ASF_AGE
+      );
+      WritableArray out = Arguments.createArray();
+      for (int v : r.ages) out.pushInt(v);
+      Log.d(TAG, "getAgeImage => n=" + r.ages.length + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+      promise.resolve(out);
+    } catch (Throwable t) {
+      Log.e(TAG, "getAgeImage failed", t);
+      promise.reject("getAgeImage_failed", t);
+    }
+  }
+
+  @ReactMethod
+  public void getGenderImage(String base64, ReadableArray faces, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "getGenderImage(faces=" + (faces == null ? 0 : faces.size()) + ")");
+    try {
+      ArcsoftEngineManager.AttrResult r = engineManager.processAttributesImage(
+              base64,
+              faceInfosFromReadableArray(faces),
+              FaceEngine.ASF_GENDER
+      );
+      WritableArray out = Arguments.createArray();
+      for (int v : r.genders) out.pushInt(v);
+      Log.d(TAG, "getGenderImage => n=" + r.genders.length + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+      promise.resolve(out);
+    } catch (Throwable t) {
+      Log.e(TAG, "getGenderImage failed", t);
+      promise.reject("getGenderImage_failed", t);
+    }
+  }
+
+  @ReactMethod
+  public void getLivenessImage(String base64, ReadableArray faces, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "getLivenessImage(faces=" + (faces == null ? 0 : faces.size()) + ")");
+    try {
+      ArcsoftEngineManager.AttrResult r = engineManager.processAttributesImage(
+              base64,
+              faceInfosFromReadableArray(faces),
+              FaceEngine.ASF_LIVENESS
+      );
+      WritableArray out = Arguments.createArray();
+      for (int v : r.liveness) out.pushInt(v);
+      Log.d(TAG, "getLivenessImage => n=" + r.liveness.length + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+      promise.resolve(out);
+    } catch (Throwable t) {
+      Log.e(TAG, "getLivenessImage failed", t);
+      promise.reject("getLivenessImage_failed", t);
+    }
+  }
+
+  @ReactMethod
+  public void getFace3DAngleImage(String base64, ReadableArray faces, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "getFace3DAngleImage(faces=" + (faces == null ? 0 : faces.size()) + ")");
+    try {
+      ArcsoftEngineManager.AttrResult r = engineManager.processAttributesImage(
+              base64,
+              faceInfosFromReadableArray(faces),
+              0
+      );
+      WritableArray out = Arguments.createArray();
+      for (int i = 0; i < r.rolls.length; i++) {
+        WritableMap m = Arguments.createMap();
+        m.putDouble("roll", r.rolls[i]);
+        m.putDouble("pitch", i < r.pitchs.length ? r.pitchs[i] : 0);
+        m.putDouble("yaw", i < r.yaws.length ? r.yaws[i] : 0);
+        out.pushMap(m);
+      }
+      Log.d(TAG, "getFace3DAngleImage => n=" + r.rolls.length + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+      promise.resolve(out);
+    } catch (Throwable t) {
+      Log.e(TAG, "getFace3DAngleImage failed", t);
+      promise.reject("getFace3DAngleImage_failed", t);
+    }
+  }
+
+  @ReactMethod
+  public void compareFeature(ReadableMap f1, ReadableMap f2, Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "compareFeature()");
+    try {
+      String a = f1.getString("dataBase64");
+      String b = f2.getString("dataBase64");
+      float score = engineManager.compareBase64(a, b);
+      Log.d(TAG, "compareFeature => score=" + score + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+      promise.resolve((double) score);
+    } catch (Throwable t) {
+      Log.e(TAG, "compareFeature failed", t);
+      promise.reject("compareFeature_failed", t);
     }
   }
 

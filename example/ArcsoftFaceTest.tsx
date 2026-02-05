@@ -24,6 +24,7 @@ import {runOnJS} from 'react-native-reanimated';
 import {
   setLogLevel,
   activateOnline,
+  getActiveFileInfo,
   initEngine,
   unInitEngine,
   detectFacesNV21,
@@ -33,11 +34,20 @@ import {
   getGenderNV21,
   getLivenessNV21,
   getFace3DAngleNV21,
+  detectFacesImage,
+  extractFeatureImage,
+  getAgeImage,
+  getGenderImage,
+  getLivenessImage,
+  getFace3DAngleImage,
   faceDBAdd,
   faceDBSearch,
   faceDBCount,
+  faceDBClear,
+  faceDBRemove,
   type FaceInfo,
   type FaceFeature,
+  type ActiveFileInfo,
 } from 'arcsoft-face-react-native';
 
 type AttrState = {
@@ -62,13 +72,15 @@ export default function TestScreen() {
   const resize = useResizePlugin();
 
   const [activated, setActivated] = useState(false);
+  const [activeInfo, setActiveInfo] = useState<ActiveFileInfo | null>(null);
   const [inited, setInited] = useState(false);
 
   // 你换成自己的 appId/sdkKey
   const [appId, setAppId] = useState('2x7amHG5D2zXGPPunjSyV5kmhfktrivFujNSKpq1BLmD');
-  const [sdkKey, setSdkKey] = useState(Platform.OS === 'ios' ? 'FB9snd8iQpexkynHwgUpC9h8DtRcm1oLqzJ6dy3JT3HA' : '2x7amHG5D2zXGPPunjSyV5kmhfktrivFujNSKpq1BLmD');
+  const [sdkKey, setSdkKey] = useState(Platform.OS === 'ios' ? 'FB9snd8iQpexkynHwgUpC9h8DtRcm1oLqzJ6dy3JT3HA' : 'FB9snd8iQpexkynHwgUpC9h8CGJwRsg4ZJdd84yBdy9d');
 
-
+  // 图片测试
+  const [imageBase64, setImageBase64] = useState('');
 
   // 人脸库测试
   const [userId, setUserId] = useState('u_001');
@@ -101,15 +113,25 @@ export default function TestScreen() {
     try {
       await setLogLevel(5); // VERBOSE
       const ok = await activateOnline(appId.trim(), sdkKey.trim());
-      setActivated(ok);
+      setActivated(ok === 0 || ok === 90114); // 0=MOK, 90114=ALREADY_ACTIVATED
       appendLog(`activateOnline => ${ok}`);
-      if (!ok) Alert.alert('激活失败', '请确认 appId/sdkKey 是否正确。');
+      if (ok !== 0 && ok !== 90114) Alert.alert('激活失败', `code=${ok}`);
     } catch (e: any) {
       appendLog(`activateOnline error: ${String(e?.message || e)}`);
       console.error(`activateOnline error: ${String(e?.message || e)}`);
       Alert.alert('激活异常', String(e?.message || e));
     }
   }, [appId, sdkKey, appendLog]);
+
+  const doGetActiveInfo = useCallback(async () => {
+    try {
+      const info = await getActiveFileInfo();
+      setActiveInfo(info);
+      appendLog(`getActiveFileInfo => ${JSON.stringify(info)}`);
+    } catch (e: any) {
+      appendLog(`getActiveFileInfo error: ${String(e?.message || e)}`);
+    }
+  }, [appendLog]);
 
   const doInit = useCallback(async () => {
     try {
@@ -153,6 +175,26 @@ export default function TestScreen() {
       appendLog(`faceDBCount error: ${String(e?.message || e)}`);
     }
   }, [appendLog]);
+
+  const doClearDB = useCallback(async () => {
+    try {
+      await faceDBClear();
+      appendLog('faceDBClear done');
+      refreshDBCount();
+    } catch (e: any) {
+      appendLog(`faceDBClear error: ${String(e?.message || e)}`);
+    }
+  }, [appendLog, refreshDBCount]);
+
+  const doRemoveFace = useCallback(async () => {
+    try {
+      const ok = await faceDBRemove(userId);
+      appendLog(`faceDBRemove(${userId}) => ${ok}`);
+      refreshDBCount();
+    } catch (e: any) {
+      appendLog(`faceDBRemove error: ${String(e?.message || e)}`);
+    }
+  }, [appendLog, refreshDBCount, userId]);
 
   const onNv21Frame = useCallback(
       async (nv21: number[], width: number, height: number) => {
@@ -244,7 +286,7 @@ export default function TestScreen() {
       const f = lastFeatureRef.current;
       if (!f) return Alert.alert('提示', '当前没有可注册的人脸特征（请先对准人脸）');
 
-      const ok = await faceDBAdd(userId.trim(), f, userId.trim());
+      const ok = await faceDBAdd(userId.trim(), f);
       appendLog(`faceDBAdd(${userId}) => ${ok}`);
       await refreshDBCount();
       if (!ok) Alert.alert('注册失败', '请看日志输出。');
@@ -258,12 +300,11 @@ export default function TestScreen() {
       const f = lastFeatureRef.current;
       if (!f) return Alert.alert('提示', '当前没有可检索的人脸特征（请先对准人脸）');
 
-      const r = await faceDBSearch(f, 1);
+      const r = await faceDBSearch(f, 0.8);
       appendLog(`faceDBSearch => ${JSON.stringify(r)}`);
 
-      if (r?.length) {
-        const top = r[0];
-        Alert.alert('检索结果', `userId=${top.userId}\nscore=${toScoreText(top.score)}`);
+      if (r?.id) {
+        Alert.alert('检索结果', `userId=${r.id}\nscore=${toScoreText(r.score)}`);
       } else {
         Alert.alert('检索结果', '未命中');
       }
@@ -285,6 +326,31 @@ export default function TestScreen() {
       appendLog(`compareFeature error: ${String(e?.message || e)}`);
     }
   }, [appendLog]);
+
+  const doProcessImage = useCallback(async () => {
+    if (!imageBase64) {
+      Alert.alert('提示', '请先输入 Base64 图片数据');
+      return;
+    }
+    try {
+      const faces = await detectFacesImage(imageBase64);
+      appendLog(`detectFacesImage => ${faces.length} faces`);
+      if (faces.length > 0) {
+        const face = faces[0];
+        const feature = await extractFeatureImage(imageBase64, face);
+        appendLog(`extractFeatureImage => ${feature ? 'success' : 'failed'}`);
+
+        const ages = await getAgeImage(imageBase64, faces);
+        const genders = await getGenderImage(imageBase64, faces);
+        const liveness = await getLivenessImage(imageBase64, faces);
+        const angles = await getFace3DAngleImage(imageBase64, faces);
+
+        appendLog(`Image Attrs: Age=${ages[0]}, Gender=${genders[0]}, Live=${liveness[0]}, Angle=${JSON.stringify(angles[0])}`);
+      }
+    } catch (e: any) {
+      appendLog(`doProcessImage error: ${String(e?.message || e)}`);
+    }
+  }, [imageBase64, appendLog]);
 
   useEffect(() => {
     refreshDBCount();
@@ -324,8 +390,16 @@ export default function TestScreen() {
               <TouchableOpacity style={styles.btn} onPress={doActivate}>
                 <Text style={styles.btnText}>激活</Text>
               </TouchableOpacity>
+              <TouchableOpacity style={styles.btnOutline} onPress={doGetActiveInfo}>
+                <Text style={styles.btnOutlineText}>获取激活信息</Text>
+              </TouchableOpacity>
               <Text style={styles.badge}>{activated ? '已激活' : '未激活'}</Text>
             </View>
+            {activeInfo && (
+                <Text style={styles.note}>
+                  有效期: {activeInfo.expireTime}
+                </Text>
+            )}
           </View>
 
           <View style={styles.card}>
@@ -377,7 +451,23 @@ export default function TestScreen() {
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.h2}>4) 人脸库（内存）注册 / 检索</Text>
+            <Text style={styles.h2}>4) 图片处理 (Base64)</Text>
+            <TextInput
+                value={imageBase64}
+                onChangeText={setImageBase64}
+                placeholder="输入 Base64 图片数据..."
+                style={[styles.input, {height: 60}]}
+                multiline
+            />
+            <View style={styles.btnRow}>
+              <TouchableOpacity style={styles.btn} onPress={doProcessImage}>
+                <Text style={styles.btnText}>处理图片</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.h2}>5) 人脸库（内存）注册 / 检索</Text>
             <View style={styles.row}>
               <Text style={styles.label}>userId</Text>
               <TextInput value={userId} onChangeText={setUserId} style={styles.input} />
@@ -390,6 +480,12 @@ export default function TestScreen() {
               </TouchableOpacity>
               <TouchableOpacity style={styles.btn} onPress={doSearchDB}>
                 <Text style={styles.btnText}>检索DB</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.btnOutline} onPress={doRemoveFace}>
+                <Text style={styles.btnOutlineText}>删除</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.btnOutline} onPress={doClearDB}>
+                <Text style={styles.btnOutlineText}>清空</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.btnOutline} onPress={refreshDBCount}>
                 <Text style={styles.btnOutlineText}>刷新数量</Text>
@@ -433,10 +529,10 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: Platform.select({ios: 10, android: 8}),
-    minHeight: 60,
+    minHeight: 40,
     textAlignVertical: 'top',
   },
-  btnRow: {flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap'},
+  btnRow: {flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 8},
   btn: {
     backgroundColor: '#111',
     paddingHorizontal: 12,

@@ -1,4 +1,5 @@
 #import "ArcsoftEngineManager.h"
+#import "PixelBufferUtils.h" // For ASVLOFFSCREEN conversion
 
 /// 逐行对照官方 iOS Demo：
 /// - engine/ASFVideoProcessor.m
@@ -10,6 +11,9 @@
 @property(nonatomic, strong, readwrite) ArcSoftFaceEngine *engine;
 @property(nonatomic, assign) int combinedMask;
 @property(nonatomic, strong) NSArray<NSDictionary *> *lastFace3DAngles;
+@property(nonatomic, strong) NSArray<NSNumber *> *lastAges;
+@property(nonatomic, strong) NSArray<NSNumber *> *lastGenders;
+@property(nonatomic, strong) NSArray<NSNumber *> *lastLiveness;
 @end
 
 @implementation ArcsoftEngineManager
@@ -20,6 +24,9 @@
     _inited = NO;
     _combinedMask = 0;
     _lastFace3DAngles = @[];
+    _lastAges = @[];
+    _lastGenders = @[];
+    _lastLiveness = @[];
     NSLog(@"[ArcsoftEngineManager] init: engine=%@", _engine);
   }
   return self;
@@ -34,10 +41,30 @@
       NSLog(@"[ArcsoftEngineManager] Error: engine is nil");
       return -1;
   }
-
-  // 直接调用，不使用 respondsToSelector，以便发现签名不匹配问题
-  // 注意：根据头文件，方法名是 activeWithAppId:SDKKey:
   return [self.engine activeWithAppId:appId SDKKey:sdkKey];
+}
+
+- (nullable NSDictionary *)getActiveFileInfo {
+    if (!self.engine) return nil;
+
+    ArcSoftActiveInfo *activeInfo = [[ArcSoftActiveInfo alloc] init];
+    MRESULT result = [self.engine getActiveFileInfo:activeInfo];
+
+    if (result != MOK) {
+        NSLog(@"[ArcsoftEngineManager] getActiveFileInfo failed: %ld", (long)result);
+        return nil;
+    }
+
+    return @{
+        @"appId": activeInfo.appId ?: @"",
+        @"sdkKey": activeInfo.sdkKey ?: @"",
+        @"platform": activeInfo.platform ?: @"",
+        @"sdkVersion": activeInfo.sdkVersion ?: @"",
+        @"fileVersion": activeInfo.fileVersion ?: @"",
+        @"expireTime": activeInfo.endTime ?: @"",
+        // deviceFingerprint is not available in ArcSoftActiveInfo for iOS
+        @"deviceFingerprint": @""
+    };
 }
 
 - (int)initEngineWithDetectMode:(ASF_DetectMode)detectMode
@@ -62,6 +89,94 @@
   }
 }
 
+#pragma mark - Image Processing Helpers
+
+// Helper to convert UIImage to ASVLOFFSCREEN
+- (ASVLOFFSCREEN)offscreenFromImage:(UIImage *)image {
+    CGImageRef cgImage = image.CGImage;
+    size_t width = CGImageGetWidth(cgImage);
+    size_t height = CGImageGetHeight(cgImage);
+    size_t bitsPerComponent = 8;
+    size_t bytesPerRow = width * 4;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+
+    // Explicitly cast malloc's void* to MUInt8*
+    MUInt8 *data = (MUInt8 *)malloc(bytesPerRow * height);
+
+    CGContextRef context = CGBitmapContextCreate(data, width, height, bitsPerComponent, bytesPerRow, colorSpace, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+
+    CGContextDrawImage(context, CGRectMake(0, 0, width, height), cgImage);
+
+    ASVLOFFSCREEN offscreen = {0};
+    offscreen.u32PixelArrayFormat = ASVL_PAF_RGB32_B8G8R8A8; // Assuming BGRA
+    offscreen.i32Width = (int)width;
+    offscreen.i32Height = (int)height;
+    offscreen.ppu8Plane[0] = data;
+    offscreen.pi32Pitch[0] = (int)bytesPerRow;
+
+    CGContextRelease(context);
+    CGColorSpaceRelease(colorSpace);
+
+    return offscreen;
+}
+
+- (void)freeOffscreen:(ASVLOFFSCREEN *)offscreen {
+    if (offscreen && offscreen->ppu8Plane[0]) {
+        free(offscreen->ppu8Plane[0]);
+    }
+}
+
+#pragma mark - Core Methods
+
+- (void)processFaces:(ASVLOFFSCREEN *)offscreen faces:(ASF_MultiFaceInfo *)faces {
+    // Cache 3D angles
+    NSMutableArray *angles = [NSMutableArray arrayWithCapacity:faces->faceNum];
+    if (faces->face3DAngleInfo.yaw && faces->face3DAngleInfo.pitch && faces->face3DAngleInfo.roll) {
+        for (int i = 0; i < faces->faceNum; i++) {
+            [angles addObject:@{
+                @"yaw": @(faces->face3DAngleInfo.yaw[i]),
+                @"pitch": @(faces->face3DAngleInfo.pitch[i]),
+                @"roll": @(faces->face3DAngleInfo.roll[i]),
+            }];
+        }
+    }
+    self.lastFace3DAngles = angles;
+
+    // Process Age, Gender, Liveness if requested
+    int processMask = self.combinedMask & (ASF_AGE | ASF_GENDER | ASF_LIVENESS);
+    if (processMask != 0 && faces->faceNum > 0) {
+        [self.engine processWithWidth:offscreen->i32Width
+                               height:offscreen->i32Height
+                                 data:offscreen->ppu8Plane[0]
+                               format:offscreen->u32PixelArrayFormat
+                              faceRes:faces
+                                 mask:processMask];
+
+        // Cache results
+        ASF_AgeInfo ageInfo = {0};
+        [self.engine getAge:&ageInfo];
+        NSMutableArray *ages = [NSMutableArray arrayWithCapacity:ageInfo.num];
+        for (int i=0; i<ageInfo.num; i++) [ages addObject:@(ageInfo.ageArray[i])];
+        self.lastAges = ages;
+
+        ASF_GenderInfo genderInfo = {0};
+        [self.engine getGender:&genderInfo];
+        NSMutableArray *genders = [NSMutableArray arrayWithCapacity:genderInfo.num];
+        for (int i=0; i<genderInfo.num; i++) [genders addObject:@(genderInfo.genderArray[i])];
+        self.lastGenders = genders;
+
+        ASF_LivenessInfo livenessInfo = {0};
+        [self.engine getLiveness:&livenessInfo];
+        NSMutableArray *liveness = [NSMutableArray arrayWithCapacity:livenessInfo.num];
+        for (int i=0; i<livenessInfo.num; i++) [liveness addObject:@(livenessInfo.isLive[i])];
+        self.lastLiveness = liveness;
+    } else {
+        self.lastAges = @[];
+        self.lastGenders = @[];
+        self.lastLiveness = @[];
+    }
+}
+
 - (NSArray<NSDictionary *> *)detectFaces:(ASVLOFFSCREEN *)offscreen {
   if (!self.inited || offscreen == NULL) return @[];
 
@@ -72,49 +187,27 @@
                                               format:offscreen->u32PixelArrayFormat
                                              faceRes:&faces];
 
-  if (result != MOK) {
-      return @[];
-  }
+  if (result != MOK) return @[];
 
-  // Cache 3D angles
-  NSMutableArray *angles = [NSMutableArray arrayWithCapacity:faces.faceNum];
-  if (faces.face3DAngleInfo.yaw && faces.face3DAngleInfo.pitch && faces.face3DAngleInfo.roll) {
-      for (int i = 0; i < faces.faceNum; i++) {
-          [angles addObject:@{
-              @"yaw": @(faces.face3DAngleInfo.yaw[i]),
-              @"pitch": @(faces.face3DAngleInfo.pitch[i]),
-              @"roll": @(faces.face3DAngleInfo.roll[i]),
-              @"status": @(0) // Status removed in new SDK
-          }];
-      }
-  }
-  self.lastFace3DAngles = angles;
-
-  // Process Age, Gender, Liveness if requested
-  int processMask = self.combinedMask & (ASF_AGE | ASF_GENDER | ASF_LIVENESS);
-  if (processMask != 0 && faces.faceNum > 0) {
-      [self.engine processWithWidth:offscreen->i32Width
-                             height:offscreen->i32Height
-                               data:offscreen->ppu8Plane[0]
-                             format:offscreen->u32PixelArrayFormat
-                            faceRes:&faces
-                               mask:processMask];
-  }
+  [self processFaces:offscreen faces:&faces];
 
   NSMutableArray *out = [NSMutableArray arrayWithCapacity:faces.faceNum];
   for (int i = 0; i < faces.faceNum; i++) {
     MRECT r = faces.faceRect[i];
     [out addObject:@{
-      @"rect": @{
-        @"left": @(r.left),
-        @"top": @(r.top),
-        @"right": @(r.right),
-        @"bottom": @(r.bottom),
-      },
+      @"rect": @{ @"left": @(r.left), @"top": @(r.top), @"right": @(r.right), @"bottom": @(r.bottom) },
       @"orient": @(faces.faceOrient[i]),
     }];
   }
   return out;
+}
+
+- (NSArray<NSDictionary *> *)detectFacesFromImage:(UIImage *)image {
+    if (!self.inited || !image) return @[];
+    ASVLOFFSCREEN offscreen = [self offscreenFromImage:image];
+    NSArray<NSDictionary *> *faces = [self detectFaces:&offscreen];
+    [self freeOffscreen:&offscreen];
+    return faces;
 }
 
 - (NSString *)extractFeature:(ASVLOFFSCREEN *)offscreen
@@ -140,6 +233,25 @@
   return [data base64EncodedStringWithOptions:0];
 }
 
+- (nullable NSString *)extractFeatureFromImage:(UIImage *)image
+                                      faceInfo:(NSDictionary *)faceInfo {
+    if (!self.inited || !image || !faceInfo) return nil;
+
+    ASVLOFFSCREEN offscreen = [self offscreenFromImage:image];
+
+    NSDictionary *rectDict = faceInfo[@"rect"];
+    MRECT rect = {
+        [rectDict[@"left"] intValue], [rectDict[@"top"] intValue],
+        [rectDict[@"right"] intValue], [rectDict[@"bottom"] intValue]
+    };
+    int orient = [faceInfo[@"orient"] intValue];
+
+    NSString *feature = [self extractFeature:&offscreen faceRect:rect orient:orient];
+
+    [self freeOffscreen:&offscreen];
+    return feature;
+}
+
 - (float)compareFeature1:(NSData *)f1 feature2:(NSData *)f2 {
   if (!self.inited || !f1 || !f2) return 0.f;
 
@@ -156,45 +268,9 @@
   return confidenceLevel;
 }
 
-- (NSArray<NSNumber *> *)getAges {
-  if (!self.inited) return @[];
-  ASF_AgeInfo infos = {0};
-  [self.engine getAge:&infos];
-
-  NSMutableArray *arr = [NSMutableArray arrayWithCapacity:infos.num];
-  for (int i = 0; i < infos.num; i++) {
-    [arr addObject:@(infos.ageArray[i])];
-  }
-  return arr;
-}
-
-- (NSArray<NSNumber *> *)getGenders {
-  if (!self.inited) return @[];
-  ASF_GenderInfo infos = {0};
-  [self.engine getGender:&infos];
-
-  NSMutableArray *arr = [NSMutableArray arrayWithCapacity:infos.num];
-  for (int i = 0; i < infos.num; i++) {
-    // 0未知 1男 2女 (按 SDK 枚举可自行映射)
-    [arr addObject:@(infos.genderArray[i])];
-  }
-  return arr;
-}
-
-- (NSArray<NSDictionary *> *)getFace3DAngles {
-  return self.lastFace3DAngles ?: @[];
-}
-
-- (NSArray<NSNumber *> *)getLiveness {
-  if (!self.inited) return @[];
-  ASF_LivenessInfo infos = {0};
-  [self.engine getLiveness:&infos];
-
-  NSMutableArray *arr = [NSMutableArray arrayWithCapacity:infos.num];
-  for (int i = 0; i < infos.num; i++) {
-    [arr addObject:@(infos.isLive[i])];
-  }
-  return arr;
-}
+- (NSArray<NSNumber *> *)getAges { return self.lastAges ?: @[]; }
+- (NSArray<NSNumber *> *)getGenders { return self.lastGenders ?: @[]; }
+- (NSArray<NSDictionary *> *)getFace3DAngles { return self.lastFace3DAngles ?: @[]; }
+- (NSArray<NSNumber *> *)getLiveness { return self.lastLiveness ?: @[]; }
 
 @end

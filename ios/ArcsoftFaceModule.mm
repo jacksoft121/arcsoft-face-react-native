@@ -77,6 +77,12 @@ static NSData * _Nullable DataFromBase64(NSString * _Nullable base64) {
   return [[NSData alloc] initWithBase64EncodedString:base64 options:0];
 }
 
+static UIImage * _Nullable ImageFromBase64(NSString * _Nullable base64) {
+    NSData *data = DataFromBase64(base64);
+    if (!data) return nil;
+    return [UIImage imageWithData:data];
+}
+
 static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSString *formatStr) {
     ASVLOFFSCREEN offscreen = {0};
     offscreen.i32Width = width;
@@ -113,8 +119,6 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
 
 #pragma mark - NativeArcsoftFaceSpec Implementation
 
-// 直接实现协议方法，不使用 RCT_EXPORT_METHOD
-
 - (void)setLogLevel:(double)level
             resolve:(RCTPromiseResolveBlock)resolve
              reject:(RCTPromiseRejectBlock)reject
@@ -146,6 +150,24 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
     asf_logE(nil, @"activateOnline failed: %d", code);
     reject(@"ACTIVATE_FAILED", [NSString stringWithFormat:@"ArcSoft iOS activateOnline failed: %d", code], nil);
   }
+}
+
+- (void)getActiveFileInfo:(RCTPromiseResolveBlock)resolve
+                   reject:(RCTPromiseRejectBlock)reject
+{
+    long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
+    asf_logD(@"getActiveFileInfo()");
+
+    NSDictionary *info = [self.engineManager getActiveFileInfo];
+    long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
+
+    if (info) {
+        asf_logD(@"getActiveFileInfo => ok, cost=%lldms", cost);
+        resolve(info);
+    } else {
+        asf_logW(@"getActiveFileInfo => null");
+        resolve([NSNull null]);
+    }
 }
 
 - (void)initEngine:(NSDictionary *)options
@@ -240,9 +262,6 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
   asf_logD(@"detectFaces(image.len=%lu)", (unsigned long)nv21.count);
 
-  // 性能警告：在 ObjC 中遍历 NSArray 转 byte[] 非常慢！
-  // 强烈建议 JS 端改传 base64 string。
-
   id dataObj = nv21;
   NSData *data = nil;
   if ([dataObj isKindOfClass:[NSString class]]) {
@@ -324,30 +343,6 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
   resolve(@{ @"dataBase64": featBase64 });
 }
 
-- (void)compareFeature:(NSDictionary *)f1
-                    f2:(NSDictionary *)f2
-               resolve:(RCTPromiseResolveBlock)resolve
-                reject:(RCTPromiseRejectBlock)reject
-{
-  long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
-  asf_logD(@"compareFeature()");
-
-  NSData *d1 = DataFromBase64(f1[@"dataBase64"]);
-  NSData *d2 = DataFromBase64(f2[@"dataBase64"]);
-  if (!d1 || !d2) {
-    asf_logE(nil, @"compareFeature failed: bad feature");
-    reject(@"BAD_FEATURE", @"f1.dataBase64 and f2.dataBase64 are required", nil);
-    return;
-  }
-
-  float score = [self.engineManager compareFeature1:d1 feature2:d2];
-
-  long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
-  asf_logD(@"compareFeature => score=%f, cost=%lldms", score, cost);
-
-  resolve(@(score));
-}
-
 - (void)getAgeNV21:(NSArray *)nv21
              width:(double)width
             height:(double)height
@@ -355,10 +350,6 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
            resolve:(RCTPromiseResolveBlock)resolve
             reject:(RCTPromiseRejectBlock)reject
 {
-    // 简化实现：直接调用 Manager 的 getAges (假设 detectFaces 已经运行过)
-    // 注意：这依赖于 detectFaces 已经更新了 Manager 的内部状态
-    // 如果是新的图像数据，应该先 detect
-    // 但为了性能，通常是在 detectFaces 后立即调用，所以 Manager 状态应该是新的
     resolve([self.engineManager getAges]);
 }
 
@@ -390,6 +381,131 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
                     reject:(RCTPromiseRejectBlock)reject
 {
     resolve([self.engineManager getFace3DAngles]);
+}
+
+// =========================
+// Image (Base64)
+// =========================
+
+- (void)detectFacesImage:(NSString *)base64
+                 resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject
+{
+    long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
+    asf_logD(@"detectFacesImage(len=%lu)", (unsigned long)base64.length);
+
+    UIImage *image = ImageFromBase64(base64);
+    if (!image) {
+        reject(@"BAD_IMAGE", @"Invalid base64 image", nil);
+        return;
+    }
+
+    NSArray<NSDictionary *> *faces = [self.engineManager detectFacesFromImage:image];
+
+    long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
+    asf_logD(@"detectFacesImage => faces=%lu, cost=%lldms", (unsigned long)faces.count, cost);
+
+    resolve(faces);
+}
+
+- (void)extractFeatureImage:(NSString *)base64
+                       face:(NSDictionary *)face
+                    resolve:(RCTPromiseResolveBlock)resolve
+                     reject:(RCTPromiseRejectBlock)reject
+{
+    long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
+    asf_logD(@"extractFeatureImage()");
+
+    UIImage *image = ImageFromBase64(base64);
+    if (!image) {
+        reject(@"BAD_IMAGE", @"Invalid base64 image", nil);
+        return;
+    }
+
+    NSString *featBase64 = [self.engineManager extractFeatureFromImage:image faceInfo:face];
+
+    long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
+
+    if (!featBase64) {
+        asf_logW(@"extractFeatureImage => null");
+        resolve([NSNull null]);
+        return;
+    }
+
+    asf_logD(@"extractFeatureImage => ok, cost=%lldms", cost);
+    resolve(@{ @"dataBase64": featBase64 });
+}
+
+- (void)getAgeImage:(NSString *)base64
+              faces:(NSArray *)faces
+            resolve:(RCTPromiseResolveBlock)resolve
+             reject:(RCTPromiseRejectBlock)reject
+{
+    UIImage *image = ImageFromBase64(base64);
+    if (image) {
+        [self.engineManager detectFacesFromImage:image];
+    }
+    resolve([self.engineManager getAges]);
+}
+
+- (void)getGenderImage:(NSString *)base64
+                 faces:(NSArray *)faces
+               resolve:(RCTPromiseResolveBlock)resolve
+                reject:(RCTPromiseRejectBlock)reject
+{
+    UIImage *image = ImageFromBase64(base64);
+    if (image) {
+        [self.engineManager detectFacesFromImage:image];
+    }
+    resolve([self.engineManager getGenders]);
+}
+
+- (void)getLivenessImage:(NSString *)base64
+                   faces:(NSArray *)faces
+                 resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject
+{
+    UIImage *image = ImageFromBase64(base64);
+    if (image) {
+        [self.engineManager detectFacesFromImage:image];
+    }
+    resolve([self.engineManager getLiveness]);
+}
+
+- (void)getFace3DAngleImage:(NSString *)base64
+                      faces:(NSArray *)faces
+                    resolve:(RCTPromiseResolveBlock)resolve
+                     reject:(RCTPromiseRejectBlock)reject
+{
+    UIImage *image = ImageFromBase64(base64);
+    if (image) {
+        [self.engineManager detectFacesFromImage:image];
+    }
+    resolve([self.engineManager getFace3DAngles]);
+}
+
+- (void)compareFeature:(NSDictionary *)f1
+                    f2:(NSDictionary *)f2
+               resolve:(RCTPromiseResolveBlock)resolve
+                reject:(RCTPromiseRejectBlock)reject
+{
+  long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
+  asf_logD(@"compareFeature()");
+
+  NSData *d1 = DataFromBase64(f1[@"dataBase64"]);
+  NSData *d2 = DataFromBase64(f2[@"dataBase64"]);
+  if (!d1 || !d2) {
+    asf_logE(nil, @"compareFeature failed: bad feature");
+    reject(@"BAD_FEATURE", @"f1.dataBase64 and f2.dataBase64 are required", nil);
+    return;
+  }
+
+  float score = [self.engineManager compareFeature1:d1 feature2:d2];
+
+  long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
+  asf_logD(@"compareFeature => score=%f, cost=%lldms", score, cost);
+
+  resolve(@(score));
 }
 
 - (void)faceDBAdd:(NSString *)userId
