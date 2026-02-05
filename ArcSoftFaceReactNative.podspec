@@ -12,10 +12,10 @@ Pod::Spec.new do |s|
   s.platforms    = { :ios => "12.0" }
   s.source       = { :git => "https://example.com", :tag => s.version.to_s }
   s.source_files = "ios/**/*.{h,m,mm,cpp}"
-
+  s.private_header_files = "ios/**/*.h"
+  s.exclude_files = "ios/generated/**/*"
   # ✅ 把 ArcSoftFaceEngine.framework 作为 vendored frameworks 引入
   s.vendored_frameworks = "ios/ArcSoftFaceEngine.framework"
-
   s.frameworks = 'CoreVideo', 'CoreMedia', 'Accelerate'
   s.dependency "React"
   s.dependency "React-Core"
@@ -29,9 +29,5 @@ Pod::Spec.new do |s|
     s.compiler_flags = '-DRCT_NEW_ARCH_ENABLED=1'
   end
 
-  # ✅ 强行补齐搜索路径（很多 ArcSoft 的 framework 没做成“完整 module”，加这个最保险）
-  s.pod_target_xcconfig = {
-    'FRAMEWORK_SEARCH_PATHS' => '"$(PODS_TARGET_SRCROOT)/ios"',
-    'HEADER_SEARCH_PATHS'    => '"$(PODS_TARGET_SRCROOT)/ios/ArcSoftFaceEngine.framework/Headers"'
-  }
+  install_modules_dependencies(s)
 end
