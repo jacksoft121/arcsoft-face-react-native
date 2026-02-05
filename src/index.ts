@@ -1,3 +1,4 @@
+import { VisionCameraProxy, type Frame } from 'react-native-vision-camera';
 import ArcsoftFaceNative, {
   type FaceRect,
   type FaceInfo,
@@ -6,6 +7,19 @@ import ArcsoftFaceNative, {
 } from './spec/NativeArcsoftFace';
 
 export type { FaceRect, FaceInfo, FaceFeature, ActiveFileInfo };
+
+// Frame Processor Plugin
+const plugin = VisionCameraProxy.initFrameProcessorPlugin('detectFaces', {});
+
+export function detectFaces(frame: Frame): FaceInfo[] {
+  'worklet';
+  if (plugin == null) {
+      console.error("Failed to load Frame Processor Plugin 'detectFaces'!");
+      return [];
+  }
+  // @ts-ignore
+  return plugin.call(frame) as FaceInfo[];
+}
 
 export type InitEngineOptions = {
   detectMode?: 'image' | 'video';
@@ -154,6 +168,9 @@ const ArcsoftFace = {
   faceDBClear,
   faceDBCount,
   faceDBSearch,
+  
+  // Frame Processor Plugin
+  detectFaces,
 };
 
 export default ArcsoftFace;

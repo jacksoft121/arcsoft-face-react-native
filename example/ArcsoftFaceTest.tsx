@@ -18,7 +18,6 @@ import {
   type Frame,
 } from 'react-native-vision-camera';
 import {runAtTargetFps} from 'react-native-vision-camera';
-import {useResizePlugin} from 'vision-camera-resize-plugin';
 import {runOnJS} from 'react-native-reanimated';
 
 import {
@@ -45,6 +44,7 @@ import {
   faceDBCount,
   faceDBClear,
   faceDBRemove,
+  detectFaces, // Frame Processor Plugin
   type FaceInfo,
   type FaceFeature,
   type ActiveFileInfo,
@@ -69,7 +69,7 @@ function toScoreText(score: number) {
 export default function TestScreen() {
   const {hasPermission, requestPermission} = useCameraPermission();
   const device = useCameraDevice('front');
-  const {resize} = useResizePlugin();
+  
   const [activated, setActivated] = useState(false);
   const [activeInfo, setActiveInfo] = useState<ActiveFileInfo | null>(null);
   const [inited, setInited] = useState(false);
@@ -195,145 +195,32 @@ export default function TestScreen() {
     }
   }, [appendLog, refreshDBCount, userId]);
 
-  const onNv21Frame = useCallback(
-      async (nv21: number[], width: number, height: number) => {
-        console.log("onNv21Frame", nv21.length, width, height);
-        if (!inited) return;
-
-        try {
-          // 1) 检测
-          const faces = await detectFacesNV21(nv21, width, height);
-          setLastFaceCount(faces.length);
-
-          if (!faces.length) {
-            lastFeatureRef.current = null;
-            lastFaceRef.current = null;
-            return;
-          }
-
-          // 取第一张脸
-          const face = faces[0];
-          lastFaceRef.current = face;
-
-          // 2) 提特征
-          const feature = await extractFeatureNV21(nv21, width, height, face);
-          if (feature) lastFeatureRef.current = feature;
-
-          // 3) 年龄 / 性别 / 活体 / 3D角（按你 TS API 分开取）
-          // 这些函数是否需要 faces 参数，取决于你 native 的实现；你现在基线里是 (nv21,w,h,faces)
-          const ageArr = await getAgeNV21(nv21, width, height, faces);
-          const genderArr = await getGenderNV21(nv21, width, height, faces);
-          const liveArr = await getLivenessNV21(nv21, width, height, faces);
-          const angleArr = await getFace3DAngleNV21(nv21, width, height, faces);
-
-          setAttrs({
-            age: ageArr?.[0],
-            gender: genderArr?.[0],
-            liveness: liveArr?.[0],
-            yaw: angleArr?.[0]?.yaw,
-            pitch: angleArr?.[0]?.pitch,
-            roll: angleArr?.[0]?.roll,
-          });
-        } catch (e: any) {
-          appendLog(`frame error: ${String(e?.message || e)}`);
-        }
-      },
-      [appendLog, inited],
-  );
-
-  function getFrameRotationDegrees(frame: Frame) {
-    'worklet';
-    switch (frame.orientation) {
-      case 'portrait':
-        return 0;
-      case 'portrait-upside-down':
-        return 180;
-      case 'landscape-left':
-        return 90;
-      case 'landscape-right':
-        return 270;
-      default:
-        return 0;
+  const updateFaces = useCallback((faces: FaceInfo[]) => {
+    setLastFaceCount(faces.length);
+    if (faces.length > 0) {
+      lastFaceRef.current = faces[0];
+    } else {
+      lastFaceRef.current = null;
     }
-  }
+  }, []);
 
-  function getDisplayFrameSize(frame: Frame, rotation: number) {
-    'worklet';
-    const w = frame.width;
-    const h = frame.height;
-    if (rotation === 90 || rotation === 270) return {w: h, h: w};
-    return {w, h};
-  }
-
-  // FrameProcessor：把 camera frame 转成 NV21
+  // FrameProcessor using Plugin
   const frameProcessor = useFrameProcessor(
       (frame: Frame) => {
         'worklet';
-        if (!resize) return;
+        if (!inited) return;
 
-        runAtTargetFps(1, () => {
+        runAtTargetFps(5, () => {
           'worklet';
           try {
-            const isFront = true;
-            console.log("frame", frame.width, frame.height);
-            // resize-plugin 的不同版本返回结构不同：
-            // 常见是 { width, height, bytes } 或直接 Uint8Array
-            // const out: any = resize(frame, {
-            //   scale: {width: 480, height: 640},
-            //   pixelFormat: 'yuv', // 期望 NV21/YUV
-            //   dataType: 'uint8',
-            // });
-            const rotDegress = getFrameRotationDegrees(frame);
-            const {w: frameW, h: frameH} = getDisplayFrameSize(
-                frame,
-                rotDegress
-            );
-            const rotationResized: string =
-                rotDegress === 90
-                    ? '270deg'
-                    : rotDegress === 180
-                        ? '180deg'
-                        : rotDegress === 270
-                            ? '90deg'
-                            : '0deg';
-
-
-            const pixelFormatResized: 'bgr' | 'rgba' = 'bgr';
-            //todo 按frameW的大小来计算出合适的比例大小，再算出合理的DLX_CONFIG.INSPIREFACE_FILTER_MINIMUM_FACE_PIXEL_SIZE最小人脸大小
-            const scaleSize = frameW;
-            const out = resize(frame, {
-              scale: {width: scaleSize, height: scaleSize},
-              rotation: rotationResized,
-              pixelFormat: pixelFormatResized,
-              dataType: 'uint8',
-              mirror: isFront,
-            });
-
-            const w = scaleSize;
-            const h = scaleSize;
-            const bytes = out.buffer;
-            console.log("resize", w, h, out.buffer.byteLength);
-            // bytes 期望是 Uint8Array
-            if (!bytes) return;
-
-            // 尝试直接使用 new Uint8Array 包装，不依赖 instanceof
-            // @ts-ignore
-            const u8 = new Uint8Array(bytes);
-            console.log("u8 length", u8.length);
-
-            // 只有当长度大于0时才转换
-            if (u8.length > 0) {
-              // @ts-ignore
-              const arr = Array.from(u8);
-              console.log("arr", arr.length);
-              runOnJS(onNv21Frame)(arr, w, h);
-            }
-          } catch (e) {
-            console.error('Frame processor error:', e);
+            const faces = detectFaces(frame);
+            runOnJS(updateFaces)(faces);
+          } catch (e: any) {
+            console.error('Frame processor error:', e.message);
           }
         });
       },
-      [resize, onNv21Frame],
+      [inited, updateFaces],
   );
 
   const canUseCamera = useMemo(() => {
@@ -345,28 +232,22 @@ export default function TestScreen() {
       const f = lastFeatureRef.current;
       if (!f) return Alert.alert('提示', '当前没有可注册的人脸特征（请先对准人脸）');
 
-      const ok = await faceDBAdd(userId.trim(), f);
-      appendLog(`faceDBAdd(${userId}) => ${ok}`);
-      await refreshDBCount();
-      if (!ok) Alert.alert('注册失败', '请看日志输出。');
+      // Note: Feature extraction is not yet implemented in Frame Processor Plugin flow.
+      // You would need to add extractFeature to the plugin or use the image based method.
+      Alert.alert('提示', '此功能在 Frame Processor 流程中尚未实现');
+
     } catch (e: any) {
       appendLog(`faceDBAdd error: ${String(e?.message || e)}`);
     }
-  }, [appendLog, refreshDBCount, userId]);
+  }, [appendLog]);
 
   const doSearchDB = useCallback(async () => {
     try {
       const f = lastFeatureRef.current;
       if (!f) return Alert.alert('提示', '当前没有可检索的人脸特征（请先对准人脸）');
+      
+      Alert.alert('提示', '此功能在 Frame Processor 流程中尚未实现');
 
-      const r = await faceDBSearch(f, 0.8);
-      appendLog(`faceDBSearch => ${JSON.stringify(r)}`);
-
-      if (r?.id) {
-        Alert.alert('检索结果', `userId=${r.id}\nscore=${toScoreText(r.score)}`);
-      } else {
-        Alert.alert('检索结果', '未命中');
-      }
     } catch (e: any) {
       appendLog(`faceDBSearch error: ${String(e?.message || e)}`);
     }
@@ -377,10 +258,8 @@ export default function TestScreen() {
       const f = lastFeatureRef.current;
       if (!f) return Alert.alert('提示', '当前没有可对比的人脸特征');
 
-      // 简单示例：用同一个 feature 和自己对比，理论上应接近满分
-      const score = await compareFeature(f, f);
-      appendLog(`compareFeature(self,self) => ${score}`);
-      Alert.alert('对比分数', toScoreText(score));
+      Alert.alert('提示', '此功能在 Frame Processor 流程中尚未实现');
+
     } catch (e: any) {
       appendLog(`compareFeature error: ${String(e?.message || e)}`);
     }
@@ -478,7 +357,7 @@ export default function TestScreen() {
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.h2}>3) Camera / Detect / Attribute</Text>
+            <Text style={styles.h2}>3) Camera / Detect (Frame Processor)</Text>
             {canUseCamera ? (
                 <View style={styles.previewWrap}>
                   <Camera
@@ -495,18 +374,9 @@ export default function TestScreen() {
             )}
 
             <Text style={styles.kv}>检测到人脸数：{lastFaceCount}</Text>
-            <Text style={styles.kv}>年龄：{attrs.age ?? '-'}</Text>
-            <Text style={styles.kv}>性别：{attrs.gender ?? '-'}</Text>
-            <Text style={styles.kv}>活体：{attrs.liveness ?? '-'}</Text>
-            <Text style={styles.kv}>
-              3D角：yaw={attrs.yaw ?? '-'} pitch={attrs.pitch ?? '-'} roll={attrs.roll ?? '-'}
+            <Text style={styles.note}>
+              Frame Processor 流程仅测试人脸检测。
             </Text>
-
-            <View style={styles.btnRow}>
-              <TouchableOpacity style={styles.btn} onPress={doCompare}>
-                <Text style={styles.btnText}>自对比(Feature)</Text>
-              </TouchableOpacity>
-            </View>
           </View>
 
           <View style={styles.card}>
