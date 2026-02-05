@@ -9,16 +9,28 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import {
   Camera,
   useCameraDevice,
   useCameraPermission,
   useFrameProcessor,
+  VisionCameraProxy, // Import Proxy directly
   type Frame,
 } from 'react-native-vision-camera';
 import {runAtTargetFps} from 'react-native-vision-camera';
-import {runOnJS} from 'react-native-reanimated';
+import {Worklets} from 'react-native-worklets-core'; // Import Worklets
+import {
+  Canvas,
+  Rect,
+  Skia,
+  ColorType,
+  AlphaType,
+  ImageFormat,
+  useFont,
+  Text as SkiaText,
+} from '@shopify/react-native-skia';
 
 import {
   setLogLevel,
@@ -44,11 +56,25 @@ import {
   faceDBCount,
   faceDBClear,
   faceDBRemove,
-  detectFaces, // Frame Processor Plugin
+  // detectFaces, // Comment out library import
   type FaceInfo,
   type FaceFeature,
   type ActiveFileInfo,
+  type FaceRect,
 } from 'arcsoft-face-react-native';
+
+// Define plugin locally
+const plugin = VisionCameraProxy.initFrameProcessorPlugin('detectFaces', {});
+
+function detectFaces(frame: Frame): FaceInfo[] {
+  'worklet';
+  if (plugin == null) {
+      console.error("Failed to load Frame Processor Plugin 'detectFaces'!");
+      return [];
+  }
+  // @ts-ignore
+  return plugin.call(frame) as FaceInfo[];
+}
 
 type AttrState = {
   age?: number;
@@ -57,6 +83,16 @@ type AttrState = {
   yaw?: number;
   pitch?: number;
   roll?: number;
+};
+
+// UI Box type
+type FaceBoxUI = {
+  id: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  orient: number;
 };
 
 function toScoreText(score: number) {
@@ -69,7 +105,12 @@ function toScoreText(score: number) {
 export default function TestScreen() {
   const {hasPermission, requestPermission} = useCameraPermission();
   const device = useCameraDevice('front');
+  const {width: screenW, height: screenH} = useWindowDimensions();
   
+  // Camera view dimensions (approximate 4:3 aspect ratio for preview)
+  const cameraW = screenW;
+  const cameraH = Math.round(screenW * 4 / 3);
+
   const [activated, setActivated] = useState(false);
   const [activeInfo, setActiveInfo] = useState<ActiveFileInfo | null>(null);
   const [inited, setInited] = useState(false);
@@ -89,7 +130,10 @@ export default function TestScreen() {
   const [lastFaceCount, setLastFaceCount] = useState(0);
   const [attrs, setAttrs] = useState<AttrState>({});
   const [log, setLog] = useState<string>('');
+  const [boxes, setBoxes] = useState<FaceBoxUI[]>([]);
 
+  // Skia font
+  const font = useFont(require('./assets/fonts/PingFangSC-Regular.ttf'), 18); // Ensure you have this font or use system font
 
   // 保存一份 feature 用于对比/注册
   const lastFeatureRef = useRef<FaceFeature | null>(null);
@@ -160,6 +204,7 @@ export default function TestScreen() {
       setInited(false);
       lastFeatureRef.current = null;
       lastFaceRef.current = null;
+      setBoxes([]);
     } catch (e: any) {
       appendLog(`unInitEngine error: ${String(e?.message || e)}`);
     }
@@ -195,32 +240,96 @@ export default function TestScreen() {
     }
   }, [appendLog, refreshDBCount, userId]);
 
-  const updateFaces = useCallback((faces: FaceInfo[]) => {
-    setLastFaceCount(faces.length);
-    if (faces.length > 0) {
-      lastFaceRef.current = faces[0];
-    } else {
-      lastFaceRef.current = null;
-    }
-  }, []);
+  // Use useMemo + Worklets.createRunOnJS for better performance and stability
+  const reportFacesToJS = useMemo(() => {
+    return Worklets.createRunOnJS((payload: { faces: FaceInfo[], frameW: number, frameH: number }) => {
+        const { faces, frameW, frameH } = payload;
+        setLastFaceCount(faces.length);
 
-  // FrameProcessor using Plugin
+        if (faces.length > 0) {
+            lastFaceRef.current = faces[0];
+        } else {
+            lastFaceRef.current = null;
+        }
+
+        // Coordinate mapping logic
+        // Assuming 270 deg rotation for front camera (Android)
+        // Swap frame dimensions for calculation because of rotation
+        const rotatedFrameW = frameH;
+        const rotatedFrameH = frameW;
+
+        const scaleX = cameraW / rotatedFrameW;
+        const scaleY = cameraH / rotatedFrameH;
+        
+        // Use 'cover' logic (max scale)
+        const scale = Math.max(scaleX, scaleY);
+
+        const scaledW = rotatedFrameW * scale;
+        const scaledH = rotatedFrameH * scale;
+
+        const offsetX = (cameraW - scaledW) / 2;
+        const offsetY = (cameraH - scaledH) / 2;
+
+        const uiBoxes = faces.map((face, i) => {
+            let x = face.rect.left;
+            let y = face.rect.top;
+            let w = face.rect.right - face.rect.left;
+            let h = face.rect.bottom - face.rect.top;
+
+            if (frameW > frameH && cameraW < cameraH) {
+                // Rotate 270 deg (Front)
+                const oldX = x;
+                const oldY = y;
+                const oldW = w;
+                const oldH = h;
+                
+                if (Platform.OS === 'android') {
+                     // Android Front: 270 deg
+                     x = oldY;
+                     y = frameW - (oldX + oldW);
+                     w = oldH;
+                     h = oldW;
+                     
+                     // Mirroring (Front camera is usually mirrored)
+                     x = rotatedFrameW - (x + w);
+                }
+            }
+            
+            return {
+                id: face.faceId || i,
+                x: x * scale + offsetX,
+                y: y * scale + offsetY,
+                width: w * scale,
+                height: h * scale,
+                orient: face.orient
+            };
+        });
+        
+        setBoxes(uiBoxes);
+    });
+  }, [cameraW, cameraH]);
+
+  // FrameProcessor using Plugin (Inline logic)
   const frameProcessor = useFrameProcessor(
       (frame: Frame) => {
         'worklet';
         if (!inited) return;
 
-        runAtTargetFps(5, () => {
+        runAtTargetFps(15, () => {
           'worklet';
           try {
-            const faces = detectFaces(frame);
-            runOnJS(updateFaces)(faces);
+            if (plugin != null) {
+                // @ts-ignore
+                const faces = plugin.call(frame) as FaceInfo[];
+                // Call the JS function created by Worklets.createRunOnJS
+                reportFacesToJS({ faces, frameW: frame.width, frameH: frame.height });
+            }
           } catch (e: any) {
             console.error('Frame processor error:', e.message);
           }
         });
       },
-      [inited, updateFaces],
+      [inited, reportFacesToJS],
   );
 
   const canUseCamera = useMemo(() => {
@@ -366,8 +475,23 @@ export default function TestScreen() {
                       isActive={inited}
                       pixelFormat="yuv"
                       frameProcessor={frameProcessor}
-                      frameProcessorFps={5}
+                      frameProcessorFps={15} // Higher FPS for smooth boxes
                   />
+                  {/* Skia Canvas for drawing boxes */}
+                  <Canvas style={StyleSheet.absoluteFill} pointerEvents="none">
+                    {boxes.map((box, i) => (
+                        <Rect
+                            key={i}
+                            x={box.x}
+                            y={box.y}
+                            width={box.width}
+                            height={box.height}
+                            color="red"
+                            style="stroke"
+                            strokeWidth={2}
+                        />
+                    ))}
+                  </Canvas>
                 </View>
             ) : (
                 <Text style={styles.note}>相机不可用：请确认权限 / 设备。</Text>

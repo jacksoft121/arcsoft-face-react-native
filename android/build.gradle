@@ -24,14 +24,18 @@ android {
 }
 
 repositories {
-  google(); mavenCentral()
+  maven { url 'https://maven.aliyun.com/repository/public/' }
+  maven { url 'https://maven.aliyun.com/repository/google/' }
+  google()
+  mavenCentral()
 }
 
 dependencies {
   implementation "com.facebook.react:react-android"
   implementation "org.jetbrains.kotlin:kotlin-stdlib"
-
   // ArcSoft JARs
   implementation files('libs/arcsoft_face.jar')
   implementation files('libs/arcsoft_image_util.jar')
+
+  api project(":react-native-vision-camera")
 }

@@ -9,15 +9,13 @@ Pod::Spec.new do |s|
   s.homepage     = package['homepage']
   s.license      = { :type => package['license'], :file => 'LICENSE' }
   s.author       = { package['author']['name'] => package['author']['email'] }
-  s.platforms    = { :ios => "12.0" }
+  s.platforms    = { :ios => "13.0" }
   s.source       = { :git => "https://example.com", :tag => s.version.to_s }
-  s.source_files = "ios/**/*.{h,m,mm,cpp}"
-  s.private_header_files = "ios/**/*.h"
-  s.exclude_files = "ios/generated/**/*"
-  # ✅ 把 ArcSoftFaceEngine.framework 作为 vendored frameworks 引入
+
+  s.source_files = "ios/**/*.{h,m,mm}"
+
   s.vendored_frameworks = "ios/ArcSoftFaceEngine.framework"
   s.frameworks = 'CoreVideo', 'CoreMedia', 'Accelerate'
-
 
   install_modules_dependencies(s)
 end
