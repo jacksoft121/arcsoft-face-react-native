@@ -1,6 +1,9 @@
 package com.arcsoftfacern;
 
+import android.content.Context;
+import android.graphics.ImageFormat;
 import android.graphics.Rect;
+import android.graphics.YuvImage;
 import android.media.Image;
 import android.util.Log;
 import androidx.annotation.NonNull;
@@ -9,6 +12,8 @@ import com.arcsoft.face.FaceInfo;
 import com.mrousavy.camera.frameprocessors.Frame;
 import com.mrousavy.camera.frameprocessors.FrameProcessorPlugin;
 import com.mrousavy.camera.frameprocessors.VisionCameraProxy;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -33,36 +38,72 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
         return null;
       }
 
-      // Convert Image (YUV_420_888) to NV21
       byte[] nv21 = yuv420ToNv21(image);
       if (nv21 == null) return null;
 
-        int imageWidth =  image.getWidth();
-        int imageHeight = image.getHeight();
-        List<FaceInfo> faces = engineManager.detectFacesNV21(nv21, imageWidth, imageHeight);
+      boolean saveImage = false;
+      if (arguments != null && arguments.containsKey("saveImage")) {
+        Object val = arguments.get("saveImage");
+        if (val instanceof Boolean) {
+          saveImage = (Boolean) val;
+        }
+      }
 
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (FaceInfo face : faces) {
-            Map<String, Object> map = new HashMap<>();
-            Rect r = face.getRect();
-            Map<String, Object> rectMap = new HashMap<>();
-            rectMap.put("left",r.left);
-            rectMap.put("top", r.top);
-            rectMap.put("right", r.right);
-            rectMap.put("bottom", r.bottom);
+      String imagePath = null;
+      if (saveImage) {
+        imagePath = saveFrame(image, nv21);
+      }
 
-            map.put("rect", rectMap);
-            map.put("orient", face.getOrient());
-            map.put("faceId", face.getFaceId());
-            map.put("imageWidth", imageWidth);
-            map.put("imageHeight", imageHeight);
+      List<FaceInfo> faces = engineManager.detectFacesNV21(nv21, image.getWidth(), image.getHeight());
 
-            result.add(map);
+      List<Map<String, Object>> faceList = new ArrayList<>();
+      for (FaceInfo face : faces) {
+        Map<String, Object> map = new HashMap<>();
+        Rect r = face.getRect();
+        Map<String, Object> rectMap = new HashMap<>();
+        rectMap.put("left", (double) r.left);
+        rectMap.put("top", (double) r.top);
+        rectMap.put("right", (double) r.right);
+        rectMap.put("bottom", (double) r.bottom);
+
+        map.put("rect", rectMap);
+        map.put("orient", (double) face.getOrient());
+        map.put("faceId", (double) face.getFaceId());
+
+        faceList.add(map);
+      }
+
+      Map<String, Object> result = new HashMap<>();
+      result.put("faces", faceList);
+      if (imagePath != null) {
+        result.put("imagePath", imagePath);
       }
 
       return result;
     } catch (Throwable e) {
       Log.e(TAG, "Error processing frame", e);
+      return null;
+    }
+  }
+
+  private String saveFrame(Image image, byte[] nv21) {
+    try {
+      Context context = engineManager.getContext();
+      if (context == null) {
+        return null;
+      }
+
+      File file = new File(context.getExternalCacheDir(), "frame_" + System.currentTimeMillis() + ".jpg");
+      FileOutputStream fos = new FileOutputStream(file);
+
+      YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
+      yuvImage.compressToJpeg(new Rect(0, 0, image.getWidth(), image.getHeight()), 80, fos);
+
+      fos.close();
+      Log.i(TAG, "Saved frame to " + file.getAbsolutePath());
+      return "file://" + file.getAbsolutePath();
+    } catch (Exception e) {
+      Log.e(TAG, "Failed to save frame", e);
       return null;
     }
   }

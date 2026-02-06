@@ -103,6 +103,10 @@ public class ArcsoftEngineManager {
     i("EngineManager created");
   }
 
+  public Context getContext() {
+      return appContext;
+  }
+
   public synchronized int activateOnline(String appId, String sdkKey) {
     long t0 = System.currentTimeMillis();
     d("activateOnline(appId.len=" + (appId == null ? 0 : appId.length()) + ", sdkKey.len=" + (sdkKey == null ? 0 : sdkKey.length()) + ")");
