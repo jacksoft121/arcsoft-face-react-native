@@ -11,14 +11,23 @@ export type { FaceRect, FaceInfo, FaceFeature, ActiveFileInfo };
 // Frame Processor Plugin
 const plugin = VisionCameraProxy.initFrameProcessorPlugin('detectFaces', {});
 
-export function detectFaces(frame: Frame): FaceInfo[] {
+export interface DetectFacesResult {
+  faces: FaceInfo[];
+  imagePath?: string;
+}
+
+export interface DetectFacesOptions {
+  saveImage?: boolean;
+}
+
+export function detectFaces(frame: Frame, options?: DetectFacesOptions): DetectFacesResult {
   'worklet';
   if (plugin == null) {
       console.error("Failed to load Frame Processor Plugin 'detectFaces'!");
-      return [];
+      return { faces: [] };
   }
   // @ts-ignore
-  return plugin.call(frame) as FaceInfo[];
+  return plugin.call(frame, options) as DetectFacesResult;
 }
 
 export type InitEngineOptions = {

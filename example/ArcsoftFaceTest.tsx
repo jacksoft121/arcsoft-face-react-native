@@ -16,20 +16,15 @@ import {
   useCameraDevice,
   useCameraPermission,
   useFrameProcessor,
-  VisionCameraProxy, // Import Proxy directly
+  VisionCameraProxy,
   type Frame,
 } from 'react-native-vision-camera';
 import {runAtTargetFps} from 'react-native-vision-camera';
-import {Worklets} from 'react-native-worklets-core'; // Import Worklets
+import {Worklets} from 'react-native-worklets-core';
 import {
   Canvas,
   Rect,
-  Skia,
-  ColorType,
-  AlphaType,
-  ImageFormat,
   useFont,
-  Text as SkiaText,
 } from '@shopify/react-native-skia';
 
 import {
@@ -56,30 +51,21 @@ import {
   faceDBCount,
   faceDBClear,
   faceDBRemove,
-  // detectFaces, // Comment out library import
   type FaceInfo,
   type FaceFeature,
   type ActiveFileInfo,
   type FaceRect,
+  type DetectFacesResult,
+  type DetectFacesOptions,
 } from 'arcsoft-face-react-native';
 
 // Define plugin locally
 const plugin = VisionCameraProxy.initFrameProcessorPlugin('detectFaces', {});
 
-function detectFaces(frame: Frame): FaceInfo[] {
-  'worklet';
-  if (plugin == null) {
-      console.error("Failed to load Frame Processor Plugin 'detectFaces'!");
-      return [];
-  }
-  // @ts-ignore
-  return plugin.call(frame) as FaceInfo[];
-}
-
 type AttrState = {
   age?: number;
-  gender?: number; // 0男 1女 -1未知（以SDK为准）
-  liveness?: number; // 0/1/-1（以SDK为准）
+  gender?: number;
+  liveness?: number;
   yaw?: number;
   pitch?: number;
   roll?: number;
@@ -93,10 +79,10 @@ type FaceBoxUI = {
   width: number;
   height: number;
   orient: number;
+  color: string;
 };
 
 function toScoreText(score: number) {
-  // 有的SDK返回 0~1，有的返回 0~100
   if (!Number.isFinite(score)) return '0';
   if (score <= 1.0) return (score * 100).toFixed(2);
   return score.toFixed(2);
@@ -105,37 +91,31 @@ function toScoreText(score: number) {
 export default function TestScreen() {
   const {hasPermission, requestPermission} = useCameraPermission();
   const device = useCameraDevice('front');
-  const {width: screenW, height: screenH} = useWindowDimensions();
+  const {width: screenW} = useWindowDimensions();
   
   // Camera view dimensions (approximate 4:3 aspect ratio for preview)
   const cameraW = screenW;
   const cameraH = Math.round(screenW * 4 / 3);
 
+  const [cameraLayout, setCameraLayout] = useState({width: cameraW, height: cameraH});
+
   const [activated, setActivated] = useState(false);
   const [activeInfo, setActiveInfo] = useState<ActiveFileInfo | null>(null);
   const [inited, setInited] = useState(false);
 
-  // 你换成自己的 appId/sdkKey
   const [appId, setAppId] = useState('2x7amHG5D2zXGPPunjSyV5kmhfktrivFujNSKpq1BLmD');
   const [sdkKey, setSdkKey] = useState(Platform.OS === 'ios' ? 'FB9snd8iQpexkynHwgUpC9h8DtRcm1oLqzJ6dy3JT3HA' : 'FB9snd8iQpexkynHwgUpC9h8CGJwRsg4ZJdd84yBdy9d');
 
-  // 图片测试
   const [imageBase64, setImageBase64] = useState('');
-
-  // 人脸库测试
   const [userId, setUserId] = useState('u_001');
   const [dbCount, setDbCount] = useState(0);
-
-  // 识别状态
   const [lastFaceCount, setLastFaceCount] = useState(0);
   const [attrs, setAttrs] = useState<AttrState>({});
   const [log, setLog] = useState<string>('');
   const [boxes, setBoxes] = useState<FaceBoxUI[]>([]);
 
-  // Skia font
-  const font = useFont(require('./assets/fonts/PingFangSC-Regular.ttf'), 18); // Ensure you have this font or use system font
+  const font = useFont(require('./assets/fonts/PingFangSC-Regular.ttf'), 18);
 
-  // 保存一份 feature 用于对比/注册
   const lastFeatureRef = useRef<FaceFeature | null>(null);
   const lastFaceRef = useRef<FaceInfo | null>(null);
 
@@ -148,20 +128,17 @@ export default function TestScreen() {
 
   useEffect(() => {
     if (!hasPermission) requestPermission();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-
   }, []);
 
   const doActivate = useCallback(async () => {
     try {
-      await setLogLevel(5); // VERBOSE
+      await setLogLevel(5);
       const ok = await activateOnline(appId.trim(), sdkKey.trim());
-      setActivated(ok === 0 || ok === 90114); // 0=MOK, 90114=ALREADY_ACTIVATED
+      setActivated(ok === 0 || ok === 90114);
       appendLog(`activateOnline => ${ok}`);
       if (ok !== 0 && ok !== 90114) Alert.alert('激活失败', `code=${ok}`);
     } catch (e: any) {
       appendLog(`activateOnline error: ${String(e?.message || e)}`);
-      console.error(`activateOnline error: ${String(e?.message || e)}`);
       Alert.alert('激活异常', String(e?.message || e));
     }
   }, [appId, sdkKey, appendLog]);
@@ -178,9 +155,8 @@ export default function TestScreen() {
 
   const doInit = useCallback(async () => {
     try {
-      // combinedMask 用配置对象更直观（与你现在 index.ts 一致）
       const code = await initEngine({
-        detectMode: 'image', // 用 NV21 做图片模式就行
+        detectMode: 'image',
         maxFaceNum: 10,
         scale: 16,
         enableAge: true,
@@ -242,11 +218,13 @@ export default function TestScreen() {
 
   // Use useMemo + Worklets.createRunOnJS for better performance and stability
   const reportFacesToJS = useMemo(() => {
-    return Worklets.createRunOnJS((payload: { faces: FaceInfo[], frameW: number, frameH: number }) => {
-        const { faces, frameW, frameH } = payload;
+    return Worklets.createRunOnJS((payload: { faces: FaceInfo[], frameW: number, frameH: number, imagePath?: string }) => {
+        const { faces, frameW, frameH, imagePath } = payload;
         setLastFaceCount(faces.length);
-        console.log('faceData:', JSON.stringify(faces));
-        console.log(`frameSize: frameW=${frameW} frameH=${frameH}`);
+        
+        if (imagePath) {
+            console.log('Image saved at:', imagePath);
+        }
 
         if (faces.length > 0) {
             lastFaceRef.current = faces[0];
@@ -254,66 +232,63 @@ export default function TestScreen() {
             lastFaceRef.current = null;
         }
 
-        // Coordinate mapping logic
-        // Assuming 270 deg rotation for front camera (Android)
-        // Swap frame dimensions for calculation because of rotation
+        // Use actual layout dimensions
+        const viewW = cameraLayout.width;
+        const viewH = cameraLayout.height;
+
+        // Coordinate mapping logic (Yellow Box)
         const rotatedFrameW = frameH;
         const rotatedFrameH = frameW;
 
-        const scaleX = cameraW / rotatedFrameW;
-        const scaleY = cameraH / rotatedFrameH;
-        
-        // Use 'cover' logic (max scale)
+        const scaleX = viewW / rotatedFrameW;
+        const scaleY = viewH / rotatedFrameH;
         const scale = Math.max(scaleX, scaleY);
 
-        const scaledW = rotatedFrameW * scale;
-        const scaledH = rotatedFrameH * scale;
-
-        const offsetX = (cameraW - scaledW) / 2;
-        const offsetY = (cameraH - scaledH) / 2;
+        const offsetX = (viewW - rotatedFrameW * scale) / 2;
+        const offsetY = (viewH - rotatedFrameH * scale) / 2;
 
         const uiBoxes = faces.map((face, i) => {
-            let x = face.rect.left;
-            let y = face.rect.top;
-            let w = face.rect.right - face.rect.left;
-            let h = face.rect.bottom - face.rect.top;
+            let { left, top, right, bottom } = face.rect;
+            let w = right - left;
+            let h = bottom - top;
 
-            if (frameW > frameH && cameraW < cameraH) {
-                // Rotate 270 deg (Front)
-                const oldX = x;
-                const oldY = y;
-                const oldW = w;
-                const oldH = h;
-                
+            if (frameW > frameH && viewW < viewH) {
                 if (Platform.OS === 'android') {
-                     // Android Front: 270 deg (Head points left in landscape buffer)
-                     // x (view) = y (image)
-                     // y (view) = x (image)
+                     // Android Front: 270 deg corrected (Yellow Box Logic)
+                     const x = frameH - (top + h);
+                     const y = frameH - (left + w);
                      
-                     x = oldY;
-                     y = oldX;
-                     w = oldH;
-                     h = oldW;
+                     const tmp = w;
+                     w = h;
+                     h = tmp;
                      
-                     // Mirroring (Front camera is usually mirrored)
-                     // x' = frameH - (x + w)
-                     x = rotatedFrameW - (x + w);
+                     return {
+                        id: face.faceId || i,
+                        x: x * scale + offsetX,
+                        y: y * scale + offsetY,
+                        width: w * scale,
+                        height: h * scale,
+                        orient: face.orient,
+                        color: 'red'
+                    };
                 }
             }
             
+            // Default mapping
             return {
                 id: face.faceId || i,
-                x: x * scale + offsetX,
-                y: y * scale + offsetY,
+                x: left * scale + offsetX,
+                y: top * scale + offsetY,
                 width: w * scale,
                 height: h * scale,
-                orient: face.orient
+                orient: face.orient,
+                color: 'red'
             };
         });
         
         setBoxes(uiBoxes);
     });
-  }, [cameraW, cameraH]);
+  }, [cameraLayout]); // Depend on cameraLayout
 
   // FrameProcessor using Plugin (Inline logic)
   const frameProcessor = useFrameProcessor(
@@ -326,9 +301,8 @@ export default function TestScreen() {
           try {
             if (plugin != null) {
                 // @ts-ignore
-                const faces = plugin.call(frame) as FaceInfo[];
-                // Call the JS function created by Worklets.createRunOnJS
-                reportFacesToJS({ faces, frameW: frame.width, frameH: frame.height });
+                const result = plugin.call(frame, { saveImage: false }) as DetectFacesResult;
+                reportFacesToJS({ faces: result.faces, frameW: frame.width, frameH: frame.height, imagePath: result.imagePath });
             }
           } catch (e: any) {
             console.error('Frame processor error:', e.message);
@@ -346,11 +320,7 @@ export default function TestScreen() {
     try {
       const f = lastFeatureRef.current;
       if (!f) return Alert.alert('提示', '当前没有可注册的人脸特征（请先对准人脸）');
-
-      // Note: Feature extraction is not yet implemented in Frame Processor Plugin flow.
-      // You would need to add extractFeature to the plugin or use the image based method.
       Alert.alert('提示', '此功能在 Frame Processor 流程中尚未实现');
-
     } catch (e: any) {
       appendLog(`faceDBAdd error: ${String(e?.message || e)}`);
     }
@@ -360,9 +330,7 @@ export default function TestScreen() {
     try {
       const f = lastFeatureRef.current;
       if (!f) return Alert.alert('提示', '当前没有可检索的人脸特征（请先对准人脸）');
-
       Alert.alert('提示', '此功能在 Frame Processor 流程中尚未实现');
-
     } catch (e: any) {
       appendLog(`faceDBSearch error: ${String(e?.message || e)}`);
     }
@@ -372,9 +340,7 @@ export default function TestScreen() {
     try {
       const f = lastFeatureRef.current;
       if (!f) return Alert.alert('提示', '当前没有可对比的人脸特征');
-
       Alert.alert('提示', '此功能在 Frame Processor 流程中尚未实现');
-
     } catch (e: any) {
       appendLog(`compareFeature error: ${String(e?.message || e)}`);
     }
@@ -474,7 +440,14 @@ export default function TestScreen() {
           <View style={styles.card}>
             <Text style={styles.h2}>3) Camera / Detect (Frame Processor)</Text>
             {canUseCamera ? (
-                <View style={styles.previewWrap}>
+                <View 
+                    style={styles.previewWrap}
+                    onLayout={(event) => {
+                        const { width, height } = event.nativeEvent.layout;
+                        console.log('Camera Layout:', width, height);
+                        setCameraLayout({ width, height });
+                    }}
+                >
                   <Camera
                       style={styles.preview}
                       device={device!}
@@ -492,7 +465,7 @@ export default function TestScreen() {
                             y={box.y}
                             width={box.width}
                             height={box.height}
-                            color="red"
+                            color={box.color}
                             style="stroke"
                             strokeWidth={2}
                         />
