@@ -69,8 +69,8 @@ const plugin = VisionCameraProxy.initFrameProcessorPlugin('detectFaces', {});
 function detectFaces(frame: Frame): FaceInfo[] {
   'worklet';
   if (plugin == null) {
-      console.error("Failed to load Frame Processor Plugin 'detectFaces'!");
-      return [];
+    console.error("Failed to load Frame Processor Plugin 'detectFaces'!");
+    return [];
   }
   // @ts-ignore
   return plugin.call(frame) as FaceInfo[];
@@ -106,7 +106,7 @@ export default function TestScreen() {
   const {hasPermission, requestPermission} = useCameraPermission();
   const device = useCameraDevice('front');
   const {width: screenW, height: screenH} = useWindowDimensions();
-  
+
   // Camera view dimensions (approximate 4:3 aspect ratio for preview)
   const cameraW = screenW;
   const cameraH = Math.round(screenW * 4 / 3);
@@ -243,69 +243,71 @@ export default function TestScreen() {
   // Use useMemo + Worklets.createRunOnJS for better performance and stability
   const reportFacesToJS = useMemo(() => {
     return Worklets.createRunOnJS((payload: { faces: FaceInfo[], frameW: number, frameH: number }) => {
-        const { faces, frameW, frameH } = payload;
-        setLastFaceCount(faces.length);
+      const { faces, frameW, frameH } = payload;
+      setLastFaceCount(faces.length);
 
-        if (faces.length > 0) {
-            lastFaceRef.current = faces[0];
-        } else {
-            lastFaceRef.current = null;
+      if (faces.length > 0) {
+        lastFaceRef.current = faces[0];
+      } else {
+        lastFaceRef.current = null;
+      }
+      console.log("faceData:", faces);
+      console.log("frameSize: frameW="+frameW+" frameH="+frameH);
+
+      // Coordinate mapping logic
+      // Assuming 270 deg rotation for front camera (Android)
+      // Swap frame dimensions for calculation because of rotation
+      const rotatedFrameW = frameH;
+      const rotatedFrameH = frameW;
+
+      const scaleX = cameraW / rotatedFrameW;
+      const scaleY = cameraH / rotatedFrameH;
+
+      // Use 'cover' logic (max scale)
+      const scale = Math.max(scaleX, scaleY);
+
+      const scaledW = rotatedFrameW * scale;
+      const scaledH = rotatedFrameH * scale;
+
+      const offsetX = (cameraW - scaledW) / 2;
+      const offsetY = (cameraH - scaledH) / 2;
+
+      const uiBoxes = faces.map((face, i) => {
+        let x = face.rect.left;
+        let y = face.rect.top;
+        let w = face.rect.right - face.rect.left;
+        let h = face.rect.bottom - face.rect.top;
+
+        if (frameW > frameH && cameraW < cameraH) {
+          // Rotate 270 deg (Front)
+          const oldX = x;
+          const oldY = y;
+          const oldW = w;
+          const oldH = h;
+
+          if (Platform.OS === 'android') {
+            // Android Front: 270 deg
+            x = oldY;
+            y = frameW - (oldX + oldW);
+            w = oldH;
+            h = oldW;
+
+            // Mirroring (Front camera is usually mirrored)
+            x = rotatedFrameW - (x + w);
+          }
         }
 
-        // Coordinate mapping logic
-        // Assuming 270 deg rotation for front camera (Android)
-        // Swap frame dimensions for calculation because of rotation
-        const rotatedFrameW = frameH;
-        const rotatedFrameH = frameW;
+        return {
+          id: face.faceId || i,
+          x: x * scale + offsetX,
+          y: y * scale + offsetY,
+          width: w * scale,
+          height: h * scale,
+          orient: face.orient
+        };
+      });
 
-        const scaleX = cameraW / rotatedFrameW;
-        const scaleY = cameraH / rotatedFrameH;
-        
-        // Use 'cover' logic (max scale)
-        const scale = Math.max(scaleX, scaleY);
-
-        const scaledW = rotatedFrameW * scale;
-        const scaledH = rotatedFrameH * scale;
-
-        const offsetX = (cameraW - scaledW) / 2;
-        const offsetY = (cameraH - scaledH) / 2;
-
-        const uiBoxes = faces.map((face, i) => {
-            let x = face.rect.left;
-            let y = face.rect.top;
-            let w = face.rect.right - face.rect.left;
-            let h = face.rect.bottom - face.rect.top;
-
-            if (frameW > frameH && cameraW < cameraH) {
-                // Rotate 270 deg (Front)
-                const oldX = x;
-                const oldY = y;
-                const oldW = w;
-                const oldH = h;
-                
-                if (Platform.OS === 'android') {
-                     // Android Front: 270 deg
-                     x = oldY;
-                     y = frameW - (oldX + oldW);
-                     w = oldH;
-                     h = oldW;
-                     
-                     // Mirroring (Front camera is usually mirrored)
-                     x = rotatedFrameW - (x + w);
-                }
-            }
-            
-            return {
-                id: face.faceId || i,
-                x: x * scale + offsetX,
-                y: y * scale + offsetY,
-                width: w * scale,
-                height: h * scale,
-                orient: face.orient
-            };
-        });
-        
-        setBoxes(uiBoxes);
+      setBoxes(uiBoxes);
     });
   }, [cameraW, cameraH]);
 
@@ -315,14 +317,14 @@ export default function TestScreen() {
         'worklet';
         if (!inited) return;
 
-        runAtTargetFps(15, () => {
+        runAtTargetFps(5, () => {
           'worklet';
           try {
             if (plugin != null) {
-                // @ts-ignore
-                const faces = plugin.call(frame) as FaceInfo[];
-                // Call the JS function created by Worklets.createRunOnJS
-                reportFacesToJS({ faces, frameW: frame.width, frameH: frame.height });
+              // @ts-ignore
+              const faces = plugin.call(frame) as FaceInfo[];
+              // Call the JS function created by Worklets.createRunOnJS
+              reportFacesToJS({ faces, frameW: frame.width, frameH: frame.height });
             }
           } catch (e: any) {
             console.error('Frame processor error:', e.message);
@@ -354,7 +356,7 @@ export default function TestScreen() {
     try {
       const f = lastFeatureRef.current;
       if (!f) return Alert.alert('提示', '当前没有可检索的人脸特征（请先对准人脸）');
-      
+
       Alert.alert('提示', '此功能在 Frame Processor 流程中尚未实现');
 
     } catch (e: any) {
