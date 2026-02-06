@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
+  Image,
 } from 'react-native';
 import {
   Camera,
@@ -66,6 +67,7 @@ import {
 } from 'arcsoft-face-react-native';
 import { NativeModules } from 'react-native';
 console.log('NativeModules keys:', Object.keys(NativeModules));
+
 // Define plugin locally
 const plugin = VisionCameraProxy.initFrameProcessorPlugin('detectFaces', {});
 
@@ -134,6 +136,10 @@ export default function TestScreen() {
   const [attrs, setAttrs] = useState<AttrState>({});
   const [log, setLog] = useState<string>('');
   const [boxes, setBoxes] = useState<FaceBoxUI[]>([]);
+
+  // 截图状态
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [savedImagePath, setSavedImagePath] = useState<string | null>(null);
 
   // Skia font
   const font = useFont(require('./assets/fonts/PingFangSC-Regular.ttf'), 18); // Ensure you have this font or use system font
@@ -251,6 +257,8 @@ export default function TestScreen() {
 
         if (imagePath) {
             console.log('Image saved at:', imagePath);
+            setSavedImagePath(imagePath);
+            setIsCapturing(false); // Stop capturing after one frame
         }
 
         if (faces.length > 0) {
@@ -264,44 +272,113 @@ export default function TestScreen() {
 
         if (viewW === 0 || viewH === 0) return;
 
-        // Scale logic (Cover)
-        // Mapped dimensions: frameH x frameW (480 x 640)
-        const scaleX = viewW / frameH;
-        const scaleY = viewH / frameW;
+        // Coordinate mapping logic
+        let rotatedFrameW = frameW;
+        let rotatedFrameH = frameH;
+
+        if (Platform.OS === 'android') {
+            // Android Front: 270 deg rotation (Swap W/H)
+            rotatedFrameW = frameH;
+            rotatedFrameH = frameW;
+        } else {
+            // iOS Front: 90 deg rotation (Swap W/H)
+            // Based on image analysis: Head points LEFT.
+            // This means the image is rotated 90 degrees Counter-Clockwise (or 270 CW) relative to Upright.
+            // So we MUST swap W/H.
+            rotatedFrameW = frameH;
+            rotatedFrameH = frameW;
+        }
+
+        const scaleX = viewW / rotatedFrameW;
+        const scaleY = viewH / rotatedFrameH;
         const scale = Math.max(scaleX, scaleY);
 
-        const scaledW = frameH * scale;
-        const scaledH = frameW * scale;
-
-        const offsetX = (viewW - scaledW) / 2;
-        const offsetY = (viewH - scaledH) / 2;
+        const offsetX = (viewW - rotatedFrameW * scale) / 2;
+        const offsetY = (viewH - rotatedFrameH * scale) / 2;
 
         const uiBoxes = faces.map((face, i) => {
             let { left, top, right, bottom } = face.rect;
+            let w = right - left;
+            let h = bottom - top;
 
-            // User provided algorithm:
-            // left: frameHeight - rect.bottom,
-            // right: frameHeight - rect.top,
-            // top: frameWidth - rect.right,
-            // bottom: frameWidth - rect.left,
+            if (Platform.OS === 'android') {
+                 // Android Front: Head points RIGHT (270 deg CW / 90 CCW)
+                 // Logic: x = frameH - (top + h), y = frameH - (left + w)
+                 // This logic is confirmed working for Android.
+                 
+                 const x = frameH - (top + h);
+                 const y = frameH - (left + w);
 
-            const mappedLeft = frameH - bottom;
-            const mappedRight = frameH - top;
-            const mappedTop = frameW - right;
-            const mappedBottom = frameW - left;
+                 const tmp = w;
+                 w = h;
+                 h = tmp;
 
-            const w = mappedRight - mappedLeft;
-            const h = mappedBottom - mappedTop;
+                 return {
+                    id: face.faceId || i,
+                    x: x * scale + offsetX,
+                    y: y * scale + offsetY,
+                    width: w * scale,
+                    height: h * scale,
+                    orient: face.orient,
+                    color: 'red'
+                };
+            } else {
+                // iOS Front: Head points LEFT.
+                // This is 180 degrees opposite to Android's "Head points RIGHT".
+                // Android Logic: x = frameH - bottom, y = frameH - right (roughly)
+                
+                // If iOS is 180 deg from Android:
+                // We need to rotate Android's logic by 180.
+                // Or derive from scratch:
+                
+                // Image: Head points LEFT.
+                // Frame Coord System: (0,0) is Top-Left of the *rotated* image.
+                // Top of head is at x=0 (left side of image).
+                // Chin is at x=max (right side of image).
+                // Left eye is at y=0 (top side of image).
+                // Right eye is at y=max (bottom side of image).
+                
+                // UI Coord System (Portrait):
+                // Top of head should be at y=0 (top).
+                // Left eye should be at x=max (right) [Mirroring!]
+                
+                // Mapping:
+                // Frame x (0..W) -> UI y (0..H)  [Direct mapping]
+                // Frame y (0..H) -> UI x (W..0)  [Inverse mapping]
+                
+                // Let's verify:
+                // Frame x=0 (Top of head) -> UI y=0 (Top of screen). Correct.
+                // Frame y=0 (Left eye) -> UI x=max (Right side of screen). Correct (Mirror).
+                
+                // So:
+                // ui_y = frame_x = left
+                // ui_x = frameH - frame_y = frameH - top
+                
+                // Let's apply to rect:
+                // ui_y = left
+                // ui_x = frameH - (top + h)  [Mirroring logic on Y axis of frame]
+                
+                // Wait, frameH is the height of the *image*, which corresponds to UI Width.
+                // So ui_x = frameH - bottom.
+                
+                const x = frameH - bottom;
+                const y = left;
+                
+                // Swap w/h
+                const tmp = w;
+                w = h;
+                h = tmp;
 
-            return {
-                id: face.faceId || i,
-                x: mappedLeft * scale + offsetX,
-                y: mappedTop * scale + offsetY,
-                width: w * scale,
-                height: h * scale,
-                orient: face.orient,
-                color: 'red'
-            };
+                return {
+                    id: face.faceId || i,
+                    x: x * scale + offsetX,
+                    y: y * scale + offsetY,
+                    width: w * scale,
+                    height: h * scale,
+                    orient: face.orient,
+                    color: 'red'
+                };
+            }
         });
 
         setBoxes(uiBoxes);
@@ -319,7 +396,7 @@ export default function TestScreen() {
           try {
             if (plugin != null) {
                 // @ts-ignore
-                const result = plugin.call(frame, { saveImage: false }) as DetectFacesResult;
+                const result = plugin.call(frame, { saveImage: isCapturing }) as DetectFacesResult;
                 // Call the JS function created by Worklets.createRunOnJS
                 reportFacesToJS({ faces: result.faces, frameW: frame.width, frameH: frame.height, imagePath: result.imagePath });
             }
@@ -328,7 +405,7 @@ export default function TestScreen() {
           }
         });
       },
-      [inited, reportFacesToJS],
+      [inited, reportFacesToJS, isCapturing],
   );
 
   const canUseCamera = useMemo(() => {
@@ -503,7 +580,29 @@ export default function TestScreen() {
                 <Text style={styles.note}>相机不可用：请确认权限 / 设备。</Text>
             )}
 
-            <Text style={styles.kv}>检测到人脸数：{lastFaceCount}</Text>
+            <View style={styles.row}>
+                <Text style={styles.kv}>检测到人脸数：{lastFaceCount}</Text>
+                <View style={{flex: 1}} />
+                <TouchableOpacity
+                    style={[styles.btn, { backgroundColor: isCapturing ? '#999' : '#007AFF' }]}
+                    onPress={() => setIsCapturing(true)}
+                    disabled={isCapturing}
+                >
+                    <Text style={styles.btnText}>{isCapturing ? '正在截图...' : '截图当前帧'}</Text>
+                </TouchableOpacity>
+            </View>
+
+            {savedImagePath && (
+                <View style={{marginTop: 10, alignItems: 'center'}}>
+                    <Text style={[styles.h2, {alignSelf: 'flex-start'}]}>最近截图：</Text>
+                    <Image
+                        source={{uri: savedImagePath}}
+                        style={{width: 200, height: 200, resizeMode: 'contain', backgroundColor: '#eee', borderWidth: 1, borderColor: '#ccc'}}
+                    />
+                    <Text style={{fontSize: 10, color: '#666', marginTop: 4}}>{savedImagePath}</Text>
+                </View>
+            )}
+
             <Text style={styles.note}>
               Frame Processor 流程仅测试人脸检测。
             </Text>
