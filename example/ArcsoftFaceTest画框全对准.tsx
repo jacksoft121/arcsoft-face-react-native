@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
+  Image,
 } from 'react-native';
 import {
   Camera,
@@ -64,6 +65,9 @@ import {
   type DetectFacesResult,
   type DetectFacesOptions,
 } from 'arcsoft-face-react-native';
+import {NativeModules} from 'react-native';
+
+console.log('NativeModules keys:', Object.keys(NativeModules));
 
 // Define plugin locally
 const plugin = VisionCameraProxy.initFrameProcessorPlugin('detectFaces', {});
@@ -72,7 +76,7 @@ function detectFaces(frame: Frame, options?: DetectFacesOptions): DetectFacesRes
   'worklet';
   if (plugin == null) {
     console.error("Failed to load Frame Processor Plugin 'detectFaces'!");
-    return { faces: [] };
+    return {faces: []};
   }
   // @ts-ignore
   return plugin.call(frame, options) as DetectFacesResult;
@@ -133,6 +137,10 @@ export default function TestScreen() {
   const [attrs, setAttrs] = useState<AttrState>({});
   const [log, setLog] = useState<string>('');
   const [boxes, setBoxes] = useState<FaceBoxUI[]>([]);
+
+  // 截图状态
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [savedImagePath, setSavedImagePath] = useState<string | null>(null);
 
   // Skia font
   const font = useFont(require('./assets/fonts/PingFangSC-Regular.ttf'), 18); // Ensure you have this font or use system font
@@ -244,12 +252,19 @@ export default function TestScreen() {
 
   // Use useMemo + Worklets.createRunOnJS for better performance and stability
   const reportFacesToJS = useMemo(() => {
-    return Worklets.createRunOnJS((payload: { faces: FaceInfo[], frameW: number, frameH: number, imagePath?: string }) => {
-      const { faces, frameW, frameH, imagePath } = payload;
+    return Worklets.createRunOnJS((payload: {
+      faces: FaceInfo[],
+      frameW: number,
+      frameH: number,
+      imagePath?: string
+    }) => {
+      const {faces, frameW, frameH, imagePath} = payload;
       setLastFaceCount(faces.length);
 
       if (imagePath) {
         console.log('Image saved at:', imagePath);
+        setSavedImagePath(imagePath);
+        setIsCapturing(false); // Stop capturing after one frame
       }
 
       if (faces.length > 0) {
@@ -263,71 +278,118 @@ export default function TestScreen() {
 
       if (viewW === 0 || viewH === 0) return;
 
-      // Scale logic (Cover)
-      // Mapped dimensions: frameH x frameW (480 x 640)
-      const scaleX = viewW / frameH;
-      const scaleY = viewH / frameW;
-      const scale = Math.max(scaleX, scaleY);
 
-      const scaledW = frameH * scale;
-      const scaledH = frameW * scale;
+      if (Platform.OS === 'android') {
+        // Scale logic (Cover)
+        // Mapped dimensions: frameH x frameW (480 x 640)
+        const scaleX = viewW / frameH;
+        const scaleY = viewH / frameW;
+        const scale = Math.max(scaleX, scaleY);
 
-      const offsetX = (viewW - scaledW) / 2;
-      const offsetY = (viewH - scaledH) / 2;
+        const scaledW = frameH * scale;
+        const scaledH = frameW * scale;
 
-      const uiBoxes = faces.map((face, i) => {
-        let { left, top, right, bottom } = face.rect;
+        const offsetX = (viewW - scaledW) / 2;
+        const offsetY = (viewH - scaledH) / 2;
 
-        // User provided algorithm:
-        // left: frameHeight - rect.bottom,
-        // right: frameHeight - rect.top,
-        // top: frameWidth - rect.right,
-        // bottom: frameWidth - rect.left,
+        const uiBoxes = faces.map((face, i) => {
+          let {left, top, right, bottom} = face.rect;
 
-        const mappedLeft = frameH - bottom;
-        const mappedRight = frameH - top;
-        const mappedTop = frameW - right;
-        const mappedBottom = frameW - left;
+          // User provided algorithm:
+          // left: frameHeight - rect.bottom,
+          // right: frameHeight - rect.top,
+          // top: frameWidth - rect.right,
+          // bottom: frameWidth - rect.left,
 
-        const w = mappedRight - mappedLeft;
-        const h = mappedBottom - mappedTop;
+          const mappedLeft = frameH - bottom;
+          const mappedRight = frameH - top;
+          const mappedTop = frameW - right;
+          const mappedBottom = frameW - left;
 
-        return {
-          id: face.faceId || i,
-          x: mappedLeft * scale + offsetX,
-          y: mappedTop * scale + offsetY,
-          width: w * scale,
-          height: h * scale,
-          orient: face.orient,
-          color: 'red'
-        };
-      });
+          const w = mappedRight - mappedLeft;
+          const h = mappedBottom - mappedTop;
 
-      setBoxes(uiBoxes);
+          return {
+            id: face.faceId || i,
+            x: mappedLeft * scale + offsetX,
+            y: mappedTop * scale + offsetY,
+            width: w * scale,
+            height: h * scale,
+            orient: face.orient,
+            color: 'red'
+          };
+        });
+
+        setBoxes(uiBoxes);
+      } else {
+        // iOS Front: 90 deg rotation (Swap W/H)
+        // Coordinate mapping logic
+        let rotatedFrameW = frameH;
+        let rotatedFrameH = frameW;
+
+
+        const scaleX = viewW / rotatedFrameW;
+        const scaleY = viewH / rotatedFrameH;
+        const scale = Math.max(scaleX, scaleY);
+
+        const offsetX = (viewW - rotatedFrameW * scale) / 2;
+        const offsetY = (viewH - rotatedFrameH * scale) / 2;
+
+        const uiBoxes = faces.map((face, i) => {
+          let {left, top, right, bottom} = face.rect;
+          let w = right - left;
+          let h = bottom - top;
+
+          const x = frameH - bottom;
+          const y = left;
+
+          // Swap w/h
+          const tmp = w;
+          w = h;
+          h = tmp;
+
+          return {
+            id: face.faceId || i,
+            x: x * scale + offsetX,
+            y: y * scale + offsetY,
+            width: w * scale,
+            height: h * scale,
+            orient: face.orient,
+            color: 'red'
+          };
+        });
+        setBoxes(uiBoxes);
+      }
+
     });
   }, [cameraLayout]);
 
   // FrameProcessor using Plugin (Inline logic)
   const frameProcessor = useFrameProcessor(
-      (frame: Frame) => {
-        'worklet';
-        if (!inited) return;
+    (frame: Frame) => {
+      'worklet';
+      if (!inited) return;
 
-        runAtTargetFps(15, () => {
-          'worklet';
-          try {
-            if (plugin != null) {
-              // @ts-ignore
-              const result = plugin.call(frame, { saveImage: false }) as DetectFacesResult;
-              // Call the JS function created by Worklets.createRunOnJS
-              reportFacesToJS({ faces: result.faces, frameW: frame.width, frameH: frame.height, imagePath: result.imagePath });
-            }
-          } catch (e: any) {
-            console.error('Frame processor error:', e.message);
+      runAtTargetFps(15, () => {
+        'worklet';
+        try {
+          if (plugin != null) {
+            // @ts-ignore
+            const result = plugin.call(frame, {saveImage: isCapturing}) as DetectFacesResult;
+            // Call the JS function created by Worklets.createRunOnJS
+            reportFacesToJS({
+              faces: result.faces,
+              frameW: frame.width,
+              frameH: frame.height,
+              imagePath: result.imagePath
+            });
           }
-        });
-      },
-      [inited, reportFacesToJS],
+        } catch (e: any) {
+          console.error('Frame processor error:', e.message);
+        }
+      });
+    },
+    [inited, reportFacesToJS, isCapturing],
   );
 
   const canUseCamera = useMemo(() => {
@@ -402,167 +464,196 @@ export default function TestScreen() {
   }, [refreshDBCount]);
 
   return (
-      <SafeAreaView style={styles.root}>
-        <ScrollView contentContainerStyle={styles.container}>
-          <Text style={styles.title}>ArcSoft Face RN 插件验证页</Text>
+    <SafeAreaView style={styles.root}>
+      <ScrollView contentContainerStyle={styles.container}>
+        <Text style={styles.title}>ArcSoft Face RN 插件验证页</Text>
 
-          <View style={styles.card}>
-            <Text style={styles.h2}>1) SDK 激活（online）</Text>
-            <View style={styles.row}>
-              <Text style={styles.label}>appId</Text>
-              <TextInput
-                  value={appId}
-                  onChangeText={setAppId}
-                  placeholder="你的 appId"
-                  style={styles.input}
-                  autoCapitalize="none"
-                  multiline
-              />
-            </View>
-            <View style={styles.row}>
-              <Text style={styles.label}>sdkKey</Text>
-              <TextInput
-                  value={sdkKey}
-                  onChangeText={setSdkKey}
-                  placeholder="你的 sdkKey"
-                  style={styles.input}
-                  autoCapitalize="none"
-                  multiline
-              />
-            </View>
-
-            <View style={styles.btnRow}>
-              <TouchableOpacity style={styles.btn} onPress={doActivate}>
-                <Text style={styles.btnText}>激活</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.btnOutline} onPress={doGetActiveInfo}>
-                <Text style={styles.btnOutlineText}>获取激活信息</Text>
-              </TouchableOpacity>
-              <Text style={styles.badge}>{activated ? '已激活' : '未激活'}</Text>
-            </View>
-            {activeInfo && (
-                <Text style={styles.note}>
-                  有效期: {activeInfo.expireTime}
-                </Text>
-            )}
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.h2}>2) Engine init / uninit</Text>
-            <View style={styles.btnRow}>
-              <TouchableOpacity style={styles.btn} onPress={doInit}>
-                <Text style={styles.btnText}>initEngine</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.btnOutline} onPress={doUnInit}>
-                <Text style={styles.btnOutlineText}>unInitEngine</Text>
-              </TouchableOpacity>
-              <Text style={styles.badge}>{inited ? '已初始化' : '未初始化'}</Text>
-            </View>
-            <Text style={styles.note}>
-              combinedMask 在你的 TS 层已改成对象参数：enableAge/enableGender/enableLiveness/enable3DAngle
-            </Text>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.h2}>3) Camera / Detect (Frame Processor)</Text>
-            {canUseCamera ? (
-                <View
-                    style={styles.previewWrap}
-                    onLayout={(event) => {
-                      const { width, height } = event.nativeEvent.layout;
-                      console.log('Camera Layout:', width, height);
-                      setCameraLayout({ width, height });
-                    }}
-                >
-                  <Camera
-                      style={styles.preview}
-                      device={device!}
-                      isActive={inited}
-                      pixelFormat="yuv"
-                      frameProcessor={frameProcessor}
-                      frameProcessorFps={15} // Higher FPS for smooth boxes
-                  />
-                  {/* Skia Canvas for drawing boxes */}
-                  <Canvas style={StyleSheet.absoluteFill} pointerEvents="none">
-                    {boxes.map((box, i) => (
-                        <Rect
-                            key={i}
-                            x={box.x}
-                            y={box.y}
-                            width={box.width}
-                            height={box.height}
-                            color={box.color}
-                            style="stroke"
-                            strokeWidth={2}
-                        />
-                    ))}
-                  </Canvas>
-                </View>
-            ) : (
-                <Text style={styles.note}>相机不可用：请确认权限 / 设备。</Text>
-            )}
-
-            <Text style={styles.kv}>检测到人脸数：{lastFaceCount}</Text>
-            <Text style={styles.note}>
-              Frame Processor 流程仅测试人脸检测。
-            </Text>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.h2}>4) 图片处理 (Base64)</Text>
+        <View style={styles.card}>
+          <Text style={styles.h2}>1) SDK 激活（online）</Text>
+          <View style={styles.row}>
+            <Text style={styles.label}>appId</Text>
             <TextInput
-                value={imageBase64}
-                onChangeText={setImageBase64}
-                placeholder="输入 Base64 图片数据..."
-                style={[styles.input, {height: 60}]}
-                multiline
+              value={appId}
+              onChangeText={setAppId}
+              placeholder="你的 appId"
+              style={styles.input}
+              autoCapitalize="none"
+              multiline
             />
-            <View style={styles.btnRow}>
-              <TouchableOpacity style={styles.btn} onPress={doProcessImage}>
-                <Text style={styles.btnText}>处理图片</Text>
-              </TouchableOpacity>
-            </View>
+          </View>
+          <View style={styles.row}>
+            <Text style={styles.label}>sdkKey</Text>
+            <TextInput
+              value={sdkKey}
+              onChangeText={setSdkKey}
+              placeholder="你的 sdkKey"
+              style={styles.input}
+              autoCapitalize="none"
+              multiline
+            />
           </View>
 
-          <View style={styles.card}>
-            <Text style={styles.h2}>5) 人脸库（内存）注册 / 检索</Text>
-            <View style={styles.row}>
-              <Text style={styles.label}>userId</Text>
-              <TextInput value={userId} onChangeText={setUserId} style={styles.input}/>
-            </View>
-
-            <Text style={styles.kv}>DB 数量：{dbCount}</Text>
-            <View style={styles.btnRow}>
-              <TouchableOpacity style={styles.btn} onPress={doRegisterToDB}>
-                <Text style={styles.btnText}>注册到DB</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.btn} onPress={doSearchDB}>
-                <Text style={styles.btnText}>检索DB</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.btnOutline} onPress={doRemoveFace}>
-                <Text style={styles.btnOutlineText}>删除</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.btnOutline} onPress={doClearDB}>
-                <Text style={styles.btnOutlineText}>清空</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.btnOutline} onPress={refreshDBCount}>
-                <Text style={styles.btnOutlineText}>刷新数量</Text>
-              </TouchableOpacity>
-            </View>
-
+          <View style={styles.btnRow}>
+            <TouchableOpacity style={styles.btn} onPress={doActivate}>
+              <Text style={styles.btnText}>激活</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.btnOutline} onPress={doGetActiveInfo}>
+              <Text style={styles.btnOutlineText}>获取激活信息</Text>
+            </TouchableOpacity>
+            <Text style={styles.badge}>{activated ? '已激活' : '未激活'}</Text>
+          </View>
+          {activeInfo && (
             <Text style={styles.note}>
-              说明：本测试页把 camera 每帧提取到的 feature 作为“当前人脸特征”。先对准人脸，再点“注册”，再点“检索”。
+              有效期: {activeInfo.expireTime}
             </Text>
+          )}
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.h2}>2) Engine init / uninit</Text>
+          <View style={styles.btnRow}>
+            <TouchableOpacity style={styles.btn} onPress={doInit}>
+              <Text style={styles.btnText}>initEngine</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.btnOutline} onPress={doUnInit}>
+              <Text style={styles.btnOutlineText}>unInitEngine</Text>
+            </TouchableOpacity>
+            <Text style={styles.badge}>{inited ? '已初始化' : '未初始化'}</Text>
+          </View>
+          <Text style={styles.note}>
+            combinedMask 在你的 TS 层已改成对象参数：enableAge/enableGender/enableLiveness/enable3DAngle
+          </Text>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.h2}>3) Camera / Detect (Frame Processor)</Text>
+          {canUseCamera ? (
+            <View
+              style={styles.previewWrap}
+              onLayout={(event) => {
+                const {width, height} = event.nativeEvent.layout;
+                console.log('Camera Layout:', width, height);
+                setCameraLayout({width, height});
+              }}
+            >
+              <Camera
+                style={styles.preview}
+                device={device!}
+                isActive={inited}
+                pixelFormat="yuv"
+                frameProcessor={frameProcessor}
+                frameProcessorFps={15} // Higher FPS for smooth boxes
+              />
+              {/* Skia Canvas for drawing boxes */}
+              <Canvas style={StyleSheet.absoluteFill} pointerEvents="none">
+                {boxes.map((box, i) => (
+                  <Rect
+                    key={i}
+                    x={box.x}
+                    y={box.y}
+                    width={box.width}
+                    height={box.height}
+                    color={box.color}
+                    style="stroke"
+                    strokeWidth={2}
+                  />
+                ))}
+              </Canvas>
+            </View>
+          ) : (
+            <Text style={styles.note}>相机不可用：请确认权限 / 设备。</Text>
+          )}
+
+          <View style={styles.row}>
+            <Text style={styles.kv}>检测到人脸数：{lastFaceCount}</Text>
+            <View style={{flex: 1}}/>
+            <TouchableOpacity
+              style={[styles.btn, {backgroundColor: isCapturing ? '#999' : '#007AFF'}]}
+              onPress={() => setIsCapturing(true)}
+              disabled={isCapturing}
+            >
+              <Text style={styles.btnText}>{isCapturing ? '正在截图...' : '截图当前帧'}</Text>
+            </TouchableOpacity>
           </View>
 
-          <View style={styles.card}>
-            <Text style={styles.h2}>日志</Text>
-            <Text style={styles.log}>{log || '（暂无）'}</Text>
+          {savedImagePath && (
+            <View style={{marginTop: 10, alignItems: 'center'}}>
+              <Text style={[styles.h2, {alignSelf: 'flex-start'}]}>最近截图：</Text>
+              <Image
+                source={{uri: savedImagePath}}
+                style={{
+                  width: 200,
+                  height: 200,
+                  resizeMode: 'contain',
+                  backgroundColor: '#eee',
+                  borderWidth: 1,
+                  borderColor: '#ccc'
+                }}
+              />
+              <Text style={{fontSize: 10, color: '#666', marginTop: 4}}>{savedImagePath}</Text>
+            </View>
+          )}
+
+          <Text style={styles.note}>
+            Frame Processor 流程仅测试人脸检测。
+          </Text>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.h2}>4) 图片处理 (Base64)</Text>
+          <TextInput
+            value={imageBase64}
+            onChangeText={setImageBase64}
+            placeholder="输入 Base64 图片数据..."
+            style={[styles.input, {height: 60}]}
+            multiline
+          />
+          <View style={styles.btnRow}>
+            <TouchableOpacity style={styles.btn} onPress={doProcessImage}>
+              <Text style={styles.btnText}>处理图片</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.h2}>5) 人脸库（内存）注册 / 检索</Text>
+          <View style={styles.row}>
+            <Text style={styles.label}>userId</Text>
+            <TextInput value={userId} onChangeText={setUserId} style={styles.input}/>
           </View>
 
-          <View style={{height: 30}}/>
-        </ScrollView>
-      </SafeAreaView>
+          <Text style={styles.kv}>DB 数量：{dbCount}</Text>
+          <View style={styles.btnRow}>
+            <TouchableOpacity style={styles.btn} onPress={doRegisterToDB}>
+              <Text style={styles.btnText}>注册到DB</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.btn} onPress={doSearchDB}>
+              <Text style={styles.btnText}>检索DB</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.btnOutline} onPress={doRemoveFace}>
+              <Text style={styles.btnOutlineText}>删除</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.btnOutline} onPress={doClearDB}>
+              <Text style={styles.btnOutlineText}>清空</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.btnOutline} onPress={refreshDBCount}>
+              <Text style={styles.btnOutlineText}>刷新数量</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.note}>
+            说明：本测试页把 camera 每帧提取到的 feature 作为“当前人脸特征”。先对准人脸，再点“注册”，再点“检索”。
+          </Text>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.h2}>日志</Text>
+          <Text style={styles.log}>{log || '（暂无）'}</Text>
+        </View>
+
+        <View style={{height: 30}}/>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 

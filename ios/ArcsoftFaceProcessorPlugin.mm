@@ -59,7 +59,11 @@
 
     NSData *data = UIImageJPEGRepresentation(uiImage, 0.8);
     NSString *fileName = [NSString stringWithFormat:@"face_%f.jpg", [[NSDate date] timeIntervalSince1970]];
-    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:fileName];
+
+    // Save to Documents directory for easier access via iTunes File Sharing
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDirectory = [paths firstObject];
+    NSString *path = [documentsDirectory stringByAppendingPathComponent:fileName];
 
     if ([data writeToFile:path atomically:YES]) {
         NSLog(@"[ArcsoftFace] Saved frame to %@", path);
