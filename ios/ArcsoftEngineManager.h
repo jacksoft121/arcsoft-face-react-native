@@ -9,6 +9,8 @@ NS_ASSUME_NONNULL_BEGIN
 /// ArcSoft FaceEngine 生命周期管理（初始化/释放/能力开关）
 @interface ArcsoftEngineManager : NSObject
 
++ (instancetype)sharedInstance;
+
 @property(nonatomic, readonly) BOOL inited;
 @property(nonatomic, strong, readonly) ArcSoftFaceEngine *engine;
 

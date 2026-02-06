@@ -18,6 +18,15 @@
 
 @implementation ArcsoftEngineManager
 
++ (instancetype)sharedInstance {
+    static ArcsoftEngineManager *instance = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        instance = [[ArcsoftEngineManager alloc] init];
+    });
+    return instance;
+}
+
 - (instancetype)init {
   if (self = [super init]) {
     _engine = [[ArcSoftFaceEngine alloc] init];

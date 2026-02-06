@@ -37,7 +37,7 @@
   // Convert CVPixelBuffer to ASVLOFFSCREEN
   ASVLOFFSCREEN offscreen = [PixelBufferUtils offscreenFromPixelBuffer:pixelBuffer];
 
-  NSArray<NSDictionary *> *faces = [[ArcsoftEngineManager shared] detectFaces:&offscreen];
+  NSArray<NSDictionary *> *faces = [[ArcsoftEngineManager sharedInstance] detectFaces:&offscreen];
 
   [PixelBufferUtils freeOffscreen:&offscreen];
 
@@ -63,13 +63,11 @@
 
     if ([data writeToFile:path atomically:YES]) {
         NSLog(@"[ArcsoftFace] Saved frame to %@", path);
-        return path; // Return path without file:// prefix usually, or with it? RN usually likes file://
-        // Let's return absolute path, JS can prepend file:// if needed, or we do it here.
         return [@"file://" stringByAppendingString:path];
     }
     return nil;
 }
 
-@end
-
 VISION_EXPORT_FRAME_PROCESSOR(ArcsoftFaceProcessorPlugin, detectFaces)
+
+@end

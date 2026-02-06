@@ -2,11 +2,6 @@
 #import <React/RCTUtils.h>
 #import <stdarg.h>
 
-#ifndef RCT_NEW_ARCH_ENABLED
-#import <React/RCTBridge.h>
-#import <React/RCTBridgeModule.h>
-#endif
-
 #import "ArcsoftEngineManager.h"
 #import "ArcsoftFaceDB.h"
 #import "PixelBufferUtils.h"
@@ -60,8 +55,13 @@ static inline void asf_logE(NSError * _Nullable err, NSString *fmt, ...) {
 
 - (instancetype)init {
   if (self = [super init]) {
-    _engineManager = [[ArcsoftEngineManager alloc] init];
-    _faceDB = [[ArcsoftFaceDB alloc] init];
+    @try {
+        _engineManager = [ArcsoftEngineManager sharedInstance]; // Use shared instance
+        _faceDB = [[ArcsoftFaceDB alloc] init];
+        NSLog(@"[ArcsoftFaceRN] Module initialized successfully");
+    } @catch (NSException *exception) {
+        NSLog(@"[ArcsoftFaceRN] Module initialization failed: %@", exception);
+    }
   }
   return self;
 }
@@ -117,11 +117,11 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
     return offscreen;
 }
 
-#pragma mark - NativeArcsoftFaceSpec Implementation
+#pragma mark - Exported Methods
 
-- (void)setLogLevel:(double)level
-            resolve:(RCTPromiseResolveBlock)resolve
-             reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(setLogLevel:(double)level
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
   @try {
     ASF_LOG_LEVEL = (NSInteger)level;
@@ -132,10 +132,10 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
   }
 }
 
-- (void)activateOnline:(NSString *)appId
-                sdkKey:(NSString *)sdkKey
-               resolve:(RCTPromiseResolveBlock)resolve
-                reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(activateOnline:(NSString *)appId
+                  sdkKey:(NSString *)sdkKey
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
   asf_logI(@"activateOnline(appId.len=%lu, sdkKey.len=%lu)", (unsigned long)appId.length, (unsigned long)sdkKey.length);
@@ -152,8 +152,8 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
   }
 }
 
-- (void)getActiveFileInfo:(RCTPromiseResolveBlock)resolve
-                   reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(getActiveFileInfo:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
     long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
     asf_logD(@"getActiveFileInfo()");
@@ -170,9 +170,9 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
     }
 }
 
-- (void)initEngine:(NSDictionary *)options
-           resolve:(RCTPromiseResolveBlock)resolve
-            reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(initEngine:(NSDictionary *)options
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
   @try {
       long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
@@ -240,8 +240,8 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
   }
 }
 
-- (void)unInitEngine:(RCTPromiseResolveBlock)resolve
-              reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(unInitEngine:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
   asf_logI(@"unInitEngine()");
@@ -253,11 +253,11 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
   resolve(@(0));
 }
 
-- (void)detectFacesNV21:(NSArray *)nv21
+RCT_EXPORT_METHOD(detectFacesNV21:(NSArray *)nv21
                   width:(double)width
-                 height:(double)height
-                resolve:(RCTPromiseResolveBlock)resolve
-                 reject:(RCTPromiseRejectBlock)reject
+                  height:(double)height
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
   asf_logD(@"detectFaces(image.len=%lu)", (unsigned long)nv21.count);
@@ -290,12 +290,12 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
   resolve(faces);
 }
 
-- (void)extractFeatureNV21:(NSArray *)nv21
-                     width:(double)width
-                    height:(double)height
-                      face:(NSDictionary *)face
-                   resolve:(RCTPromiseResolveBlock)resolve
-                    reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(extractFeatureNV21:(NSArray *)nv21
+                  width:(double)width
+                  height:(double)height
+                  face:(NSDictionary *)face
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
   asf_logD(@"extractFeature(faceIndex=%@)", face);
@@ -343,42 +343,42 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
   resolve(@{ @"dataBase64": featBase64 });
 }
 
-- (void)getAgeNV21:(NSArray *)nv21
-             width:(double)width
-            height:(double)height
-             faces:(NSArray *)faces
-           resolve:(RCTPromiseResolveBlock)resolve
-            reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(getAgeNV21:(NSArray *)nv21
+                  width:(double)width
+                  height:(double)height
+                  faces:(NSArray *)faces
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
     resolve([self.engineManager getAges]);
 }
 
-- (void)getGenderNV21:(NSArray *)nv21
-                width:(double)width
-               height:(double)height
-                faces:(NSArray *)faces
-              resolve:(RCTPromiseResolveBlock)resolve
-               reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(getGenderNV21:(NSArray *)nv21
+                  width:(double)width
+                  height:(double)height
+                  faces:(NSArray *)faces
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
     resolve([self.engineManager getGenders]);
 }
 
-- (void)getLivenessNV21:(NSArray *)nv21
+RCT_EXPORT_METHOD(getLivenessNV21:(NSArray *)nv21
                   width:(double)width
-                 height:(double)height
+                  height:(double)height
                   faces:(NSArray *)faces
-                resolve:(RCTPromiseResolveBlock)resolve
-                 reject:(RCTPromiseRejectBlock)reject
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
     resolve([self.engineManager getLiveness]);
 }
 
-- (void)getFace3DAngleNV21:(NSArray *)nv21
-                     width:(double)width
-                    height:(double)height
-                     faces:(NSArray *)faces
-                   resolve:(RCTPromiseResolveBlock)resolve
-                    reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(getFace3DAngleNV21:(NSArray *)nv21
+                  width:(double)width
+                  height:(double)height
+                  faces:(NSArray *)faces
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
     resolve([self.engineManager getFace3DAngles]);
 }
@@ -387,9 +387,9 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
 // Image (Base64)
 // =========================
 
-- (void)detectFacesImage:(NSString *)base64
-                 resolve:(RCTPromiseResolveBlock)resolve
-                  reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(detectFacesImage:(NSString *)base64
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
     long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
     asf_logD(@"detectFacesImage(len=%lu)", (unsigned long)base64.length);
@@ -408,10 +408,10 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
     resolve(faces);
 }
 
-- (void)extractFeatureImage:(NSString *)base64
-                       face:(NSDictionary *)face
-                    resolve:(RCTPromiseResolveBlock)resolve
-                     reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(extractFeatureImage:(NSString *)base64
+                  face:(NSDictionary *)face
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
     long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
     asf_logD(@"extractFeatureImage()");
@@ -436,10 +436,10 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
     resolve(@{ @"dataBase64": featBase64 });
 }
 
-- (void)getAgeImage:(NSString *)base64
-              faces:(NSArray *)faces
-            resolve:(RCTPromiseResolveBlock)resolve
-             reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(getAgeImage:(NSString *)base64
+                  faces:(NSArray *)faces
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
     UIImage *image = ImageFromBase64(base64);
     if (image) {
@@ -448,10 +448,10 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
     resolve([self.engineManager getAges]);
 }
 
-- (void)getGenderImage:(NSString *)base64
-                 faces:(NSArray *)faces
-               resolve:(RCTPromiseResolveBlock)resolve
-                reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(getGenderImage:(NSString *)base64
+                  faces:(NSArray *)faces
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
     UIImage *image = ImageFromBase64(base64);
     if (image) {
@@ -460,10 +460,10 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
     resolve([self.engineManager getGenders]);
 }
 
-- (void)getLivenessImage:(NSString *)base64
-                   faces:(NSArray *)faces
-                 resolve:(RCTPromiseResolveBlock)resolve
-                  reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(getLivenessImage:(NSString *)base64
+                  faces:(NSArray *)faces
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
     UIImage *image = ImageFromBase64(base64);
     if (image) {
@@ -472,10 +472,10 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
     resolve([self.engineManager getLiveness]);
 }
 
-- (void)getFace3DAngleImage:(NSString *)base64
-                      faces:(NSArray *)faces
-                    resolve:(RCTPromiseResolveBlock)resolve
-                     reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(getFace3DAngleImage:(NSString *)base64
+                  faces:(NSArray *)faces
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
     UIImage *image = ImageFromBase64(base64);
     if (image) {
@@ -484,10 +484,10 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
     resolve([self.engineManager getFace3DAngles]);
 }
 
-- (void)compareFeature:(NSDictionary *)f1
-                    f2:(NSDictionary *)f2
-               resolve:(RCTPromiseResolveBlock)resolve
-                reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(compareFeature:(NSDictionary *)f1
+                  f2:(NSDictionary *)f2
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
   asf_logD(@"compareFeature()");
@@ -508,10 +508,10 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
   resolve(@(score));
 }
 
-- (void)faceDBAdd:(NSString *)userId
-          feature:(NSDictionary *)feature
-          resolve:(RCTPromiseResolveBlock)resolve
-           reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(faceDBAdd:(NSString *)userId
+                  feature:(NSDictionary *)feature
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
   asf_logI(@"faceDBAdd(userId=%@)", userId);
@@ -531,9 +531,9 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
   resolve(@(success));
 }
 
-- (void)faceDBRemove:(NSString *)userId
-             resolve:(RCTPromiseResolveBlock)resolve
-              reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(faceDBRemove:(NSString *)userId
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
   asf_logI(@"faceDBRemove(userId=%@)", userId);
@@ -546,10 +546,10 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
   resolve(@(success));
 }
 
-- (void)faceDBSearch:(NSDictionary *)feature
-           threshold:(double)threshold
-             resolve:(RCTPromiseResolveBlock)resolve
-              reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(faceDBSearch:(NSDictionary *)feature
+                  threshold:(double)threshold
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
   asf_logD(@"faceDBSearch(threshold=%f)", threshold);
@@ -574,8 +574,8 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
   }
 }
 
-- (void)faceDBClear:(RCTPromiseResolveBlock)resolve
-             reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(faceDBClear:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
   asf_logI(@"faceDBClear()");
@@ -588,8 +588,8 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
   resolve(@(success));
 }
 
-- (void)faceDBCount:(RCTPromiseResolveBlock)resolve
-             reject:(RCTPromiseRejectBlock)reject
+RCT_EXPORT_METHOD(faceDBCount:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
 {
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
   asf_logD(@"faceDBCount()");
@@ -601,13 +601,5 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
 
   resolve(@(count));
 }
-
-#ifdef RCT_NEW_ARCH_ENABLED
-- (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
-    (const facebook::react::ObjCTurboModule::InitParams &)params
-{
-    return std::make_shared<facebook::react::NativeArcsoftFaceSpecJSI>(params);
-}
-#endif
 
 @end

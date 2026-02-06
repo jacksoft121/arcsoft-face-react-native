@@ -1,5 +1,4 @@
-import type { TurboModule } from 'react-native';
-import { TurboModuleRegistry } from 'react-native';
+import { NativeModules } from 'react-native';
 
 export type FaceRect = {
   left: number;
@@ -32,7 +31,7 @@ export type ActiveFileInfo = {
   deviceFingerprint: string;
 };
 
-export interface Spec extends TurboModule {
+export interface Spec {
   /**
    * SDK 激活/注册
    * Android: FaceEngine.activeOnline
@@ -101,4 +100,5 @@ export interface Spec extends TurboModule {
   setLogLevel(level: number): Promise<boolean>;
 }
 
-export default TurboModuleRegistry.getEnforcing<Spec>('ArcsoftFace');
+const { ArcsoftFace } = NativeModules;
+export default ArcsoftFace as Spec;

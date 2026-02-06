@@ -64,6 +64,8 @@ import {
   type DetectFacesResult,
   type DetectFacesOptions,
 } from 'arcsoft-face-react-native';
+import { NativeModules } from 'react-native';
+console.log('NativeModules keys:', Object.keys(NativeModules));
 
 // Define plugin locally
 const plugin = VisionCameraProxy.initFrameProcessorPlugin('detectFaces', {});
@@ -109,7 +111,7 @@ export default function TestScreen() {
   const {hasPermission, requestPermission} = useCameraPermission();
   const device = useCameraDevice('front');
   const {width: screenW, height: screenH} = useWindowDimensions();
-  
+
   // Dynamic camera dimensions
   const [cameraLayout, setCameraLayout] = useState({width: 0, height: 0});
 
@@ -247,7 +249,7 @@ export default function TestScreen() {
     return Worklets.createRunOnJS((payload: { faces: FaceInfo[], frameW: number, frameH: number, imagePath?: string }) => {
         const { faces, frameW, frameH, imagePath } = payload;
         setLastFaceCount(faces.length);
-        
+
         if (imagePath) {
             console.log('Image saved at:', imagePath);
         }
@@ -260,7 +262,7 @@ export default function TestScreen() {
 
         const viewW = cameraLayout.width;
         const viewH = cameraLayout.height;
-        
+
         if (viewW === 0 || viewH === 0) return;
 
         // Scale logic (Cover)
@@ -277,21 +279,21 @@ export default function TestScreen() {
 
         const uiBoxes = faces.map((face, i) => {
             let { left, top, right, bottom } = face.rect;
-            
+
             // User provided algorithm:
             // left: frameHeight - rect.bottom,
             // right: frameHeight - rect.top,
             // top: frameWidth - rect.right,
             // bottom: frameWidth - rect.left,
-            
+
             const mappedLeft = frameH - bottom;
             const mappedRight = frameH - top;
             const mappedTop = frameW - right;
             const mappedBottom = frameW - left;
-            
+
             const w = mappedRight - mappedLeft;
             const h = mappedBottom - mappedTop;
-            
+
             return {
                 id: face.faceId || i,
                 x: mappedLeft * scale + offsetX,
@@ -302,7 +304,7 @@ export default function TestScreen() {
                 color: 'red'
             };
         });
-        
+
         setBoxes(uiBoxes);
     });
   }, [cameraLayout]);
@@ -352,7 +354,7 @@ export default function TestScreen() {
     try {
       const f = lastFeatureRef.current;
       if (!f) return Alert.alert('提示', '当前没有可检索的人脸特征（请先对准人脸）');
-      
+
       Alert.alert('提示', '此功能在 Frame Processor 流程中尚未实现');
 
     } catch (e: any) {
@@ -466,7 +468,7 @@ export default function TestScreen() {
           <View style={styles.card}>
             <Text style={styles.h2}>3) Camera / Detect (Frame Processor)</Text>
             {canUseCamera ? (
-                <View 
+                <View
                     style={styles.previewWrap}
                     onLayout={(event) => {
                         const { width, height } = event.nativeEvent.layout;
