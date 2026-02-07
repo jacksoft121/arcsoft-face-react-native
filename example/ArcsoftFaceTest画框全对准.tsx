@@ -138,7 +138,7 @@ export default function TestScreen() {
   const doInit = useCallback(async () => {
     try {
       const code = await initEngine({
-        detectMode: 'image',
+        detectMode: 'video',
         maxFaceNum: 10,
         scale: 16,
         enableAge: true,
@@ -207,10 +207,14 @@ export default function TestScreen() {
       isFrontCamera?: boolean,
       rotDegress?: number,
     }) => {
-      const {faces, frameW, frameH, imagePath, isFrontCamera} = payload;
+      const {faces, frameW, frameH, imagePath,isFrontCamera,rotDegress } = payload;
+
+      appendLog(`reportFacesToJS => frameW:${frameW}, frameH:${frameH},rotDegress:${rotDegress}, isFrontCamera:${isFrontCamera}`);
+
       // Only log if faces found or capturing to avoid spam
       if (faces.length > 0 || imagePath) {
-        appendLog(`reportFacesToJS => faces:${faces.length}`);
+        appendLog(`reportFacesToJS => faces:${JSON.stringify(faces[0])}`);
+
       }
 
       setLastFaceCount(faces.length);
