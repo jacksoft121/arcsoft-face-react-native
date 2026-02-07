@@ -23,10 +23,12 @@
 
   if (!pixelBuffer) return nil;
 
-  // Check saveImage argument
+  // Check arguments
   BOOL saveImage = NO;
-  if (arguments && arguments[@"saveImage"]) {
-      saveImage = [arguments[@"saveImage"] boolValue];
+  BOOL extractFeature = NO;
+  if (arguments) {
+      if (arguments[@"saveImage"]) saveImage = [arguments[@"saveImage"] boolValue];
+      if (arguments[@"extractFeature"]) extractFeature = [arguments[@"extractFeature"] boolValue];
   }
 
   NSString *imagePath = nil;
@@ -39,10 +41,29 @@
 
   NSArray<NSDictionary *> *faces = [[ArcsoftEngineManager sharedInstance] detectFaces:&offscreen];
 
+  NSMutableArray *enrichedFaces = [NSMutableArray arrayWithCapacity:faces.count];
+  for (NSDictionary *face in faces) {
+      NSMutableDictionary *faceMutable = [face mutableCopy];
+      if (extractFeature) {
+          NSDictionary *rectDict = face[@"rect"];
+          MRECT rect = {
+              [rectDict[@"left"] intValue], [rectDict[@"top"] intValue],
+              [rectDict[@"right"] intValue], [rectDict[@"bottom"] intValue]
+          };
+          int orient = [face[@"orient"] intValue];
+
+          NSString *featBase64 = [[ArcsoftEngineManager sharedInstance] extractFeature:&offscreen faceRect:rect orient:orient];
+          if (featBase64) {
+              faceMutable[@"featureBase64"] = featBase64;
+          }
+      }
+      [enrichedFaces addObject:faceMutable];
+  }
+
   [PixelBufferUtils freeOffscreen:&offscreen];
 
   NSMutableDictionary *result = [NSMutableDictionary dictionary];
-  result[@"faces"] = faces;
+  result[@"faces"] = enrichedFaces;
   if (imagePath) {
       result[@"imagePath"] = imagePath;
   }

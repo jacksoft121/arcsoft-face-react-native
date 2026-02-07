@@ -5,9 +5,11 @@ import android.graphics.ImageFormat;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
 import android.media.Image;
+import android.util.Base64;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import com.arcsoft.face.FaceFeature;
 import com.arcsoft.face.FaceInfo;
 import com.mrousavy.camera.frameprocessors.Frame;
 import com.mrousavy.camera.frameprocessors.FrameProcessorPlugin;
@@ -38,24 +40,42 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
         return null;
       }
 
-      byte[] nv21 = yuv420ToNv21(image);
-      if (nv21 == null) return null;
-
+      // 1. 解析参数
       boolean saveImage = false;
-      if (arguments != null && arguments.containsKey("saveImage")) {
-        Object val = arguments.get("saveImage");
-        if (val instanceof Boolean) {
-          saveImage = (Boolean) val;
+      boolean extractFeature = false;
+      
+      if (arguments != null) {
+        if (arguments.containsKey("saveImage")) {
+          Object val = arguments.get("saveImage");
+          if (val instanceof Boolean) saveImage = (Boolean) val;
+          else if (val instanceof String) saveImage = Boolean.parseBoolean((String) val);
+        }
+        if (arguments.containsKey("extractFeature")) {
+          Object val = arguments.get("extractFeature");
+          if (val instanceof Boolean) extractFeature = (Boolean) val;
+          else if (val instanceof String) extractFeature = Boolean.parseBoolean((String) val);
         }
       }
 
+      // 2. 转换数据
+      byte[] nv21 = yuv420ToNv21(image);
+      if (nv21 == null) {
+          Log.e(TAG, "Failed to convert YUV420 to NV21");
+          return null;
+      }
+
+      // 3. 保存图片 (可选)
       String imagePath = null;
       if (saveImage) {
         imagePath = saveFrame(image, nv21);
       }
 
-      List<FaceInfo> faces = engineManager.detectFacesNV21(nv21, image.getWidth(), image.getHeight());
+      // 4. 人脸检测
+      int width = image.getWidth();
+      int height = image.getHeight();
+      List<FaceInfo> faces = engineManager.detectFacesNV21(nv21, width, height);
 
+      // 5. 结果封装 & 特征提取
       List<Map<String, Object>> faceList = new ArrayList<>();
       for (FaceInfo face : faces) {
         Map<String, Object> map = new HashMap<>();
@@ -69,6 +89,16 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
         map.put("rect", rectMap);
         map.put("orient", (double) face.getOrient());
         map.put("faceId", (double) face.getFaceId());
+
+        if (extractFeature) {
+            FaceFeature feature = engineManager.extractFeatureNV21(nv21, width, height, face);
+            if (feature != null && feature.getFeatureData() != null) {
+                String b64 = Base64.encodeToString(feature.getFeatureData(), Base64.NO_WRAP);
+                map.put("featureBase64", b64);
+            } else {
+                Log.w(TAG, "Feature extraction failed for faceId=" + face.getFaceId());
+            }
+        }
 
         faceList.add(map);
       }
