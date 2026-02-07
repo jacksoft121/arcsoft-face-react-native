@@ -24,6 +24,8 @@ import com.arcsoft.face.enums.DetectMode;
 import com.arcsoft.imageutil.ArcSoftImageFormat;
 import com.arcsoft.imageutil.ArcSoftImageUtil;
 import com.arcsoft.imageutil.ArcSoftImageUtilError;
+import com.arcsoftfacern.facedb.FaceDatabase;
+import com.arcsoftfacern.facedb.entity.FaceEntity;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -95,6 +97,7 @@ public class ArcsoftEngineManager {
   private final Context appContext;
   private FaceEngine engine;
   private boolean inited = false;
+  private FaceDatabase faceDatabase;
 
   // 人脸库映射: JS tag(String id) -> engine searchId (int)
   private final Map<String, Integer> tagToSearchId = new ConcurrentHashMap<>();
@@ -102,6 +105,7 @@ public class ArcsoftEngineManager {
 
   private ArcsoftEngineManager(Context appContext) {
     this.appContext = appContext;
+    this.faceDatabase = FaceDatabase.getInstance(appContext);
     i("EngineManager created");
   }
 
@@ -178,8 +182,32 @@ public class ArcsoftEngineManager {
       engine = null;
     } else {
       i("initEngine success => code=0, cost=" + (System.currentTimeMillis() - t0) + "ms");
+      // Load faces from DB
+      loadFacesFromDB();
     }
     return code;
+  }
+
+  private void loadFacesFromDB() {
+      if (!inited || engine == null) return;
+      List<FaceEntity> faces = faceDatabase.faceDao().getAllFaces();
+      tagToSearchId.clear();
+      // Reset nextSearchId based on DB? Or just increment.
+      // Better to keep searchId consistent if possible, but SDK uses int.
+      // We will re-register everything.
+      nextSearchId.set(1);
+
+      for (FaceEntity face : faces) {
+          int searchId = nextSearchId.getAndIncrement();
+          FaceFeatureInfo info = new FaceFeatureInfo(searchId, face.featureData, face.userId);
+          int code = engine.registerFaceFeature(info);
+          if (code == ErrorInfo.MOK) {
+              tagToSearchId.put(face.userId, searchId);
+          } else {
+              w("Failed to register face from DB: " + face.userId + ", code=" + code);
+          }
+      }
+      i("Loaded " + tagToSearchId.size() + " faces from DB");
   }
 
   /**
@@ -449,7 +477,7 @@ public class ArcsoftEngineManager {
   }
 
   // =========================
-  // Face DB (人脸库管理 - 内存)
+  // Face DB (人脸库管理 - 持久化)
   // =========================
 
   /**
@@ -464,14 +492,26 @@ public class ArcsoftEngineManager {
     d("faceDBAddOrUpdate(tag=" + tag + ", featureB64.len=" + (featureBase64 == null ? 0 : featureBase64.length()) + ")");
 
     byte[] bytes = Base64.decode(featureBase64, Base64.DEFAULT);
+
+    // 1. Save to DB
+    FaceEntity entity = new FaceEntity(tag, bytes);
+    faceDatabase.faceDao().insertFace(entity);
+
+    // 2. Update Engine
     Integer existingId = tagToSearchId.get(tag);
     if (existingId != null) {
+      // Update in engine
+      // Note: ArcSoft SDK updateFaceFeature requires FaceFeatureInfo with ID.
+      // But if we just re-register, it might fail or duplicate if not handled.
+      // Actually, registerFaceFeature returns error if ID exists? No, ID is unique.
+      // Let's try update.
       int code = engine.updateFaceFeature(new FaceFeatureInfo(existingId, bytes, tag));
       boolean ok = (code == ErrorInfo.MOK);
       d("faceDB update => ok=" + ok + ", code=" + code + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       return ok;
     }
 
+    // New face in engine
     int searchId = nextSearchId.getAndIncrement();
     int code = engine.registerFaceFeature(new FaceFeatureInfo(searchId, bytes, tag));
     if (code == ErrorInfo.MOK) {
@@ -492,6 +532,11 @@ public class ArcsoftEngineManager {
   public synchronized boolean faceDBRemove(String tag) {
     ensureInited();
     d("faceDBRemove(tag=" + tag + ")");
+
+    // 1. Remove from DB
+    faceDatabase.faceDao().deleteFaceByUserId(tag);
+
+    // 2. Remove from Engine
     Integer id = tagToSearchId.remove(tag);
     if (id == null) return false;
     int code = engine.removeFaceFeature(id);
@@ -506,6 +551,11 @@ public class ArcsoftEngineManager {
   public synchronized void faceDBClear() {
     ensureInited();
     d("faceDBClear(count=" + tagToSearchId.size() + ")");
+
+    // 1. Clear DB
+    faceDatabase.faceDao().deleteAll();
+
+    // 2. Clear Engine
     for (Integer id : tagToSearchId.values()) {
       try { engine.removeFaceFeature(id); } catch (Throwable ignore) {}
     }
@@ -516,9 +566,9 @@ public class ArcsoftEngineManager {
    * 获取人脸库数量
    */
   public synchronized int faceDBCount() {
-    ensureInited();
-    int c;
-    try { c = engine.getFaceCount(); } catch (Throwable t) { c = 0; }
+//    ensureInited();
+    // Return count from DB to be accurate
+    int c = faceDatabase.faceDao().getCount();
     d("faceDBCount => " + c);
     return c;
   }

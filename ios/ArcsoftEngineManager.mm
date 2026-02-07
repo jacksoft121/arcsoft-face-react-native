@@ -1,5 +1,6 @@
 #import "ArcsoftEngineManager.h"
 #import "PixelBufferUtils.h" // For ASVLOFFSCREEN conversion
+#import "FaceDB.h" // Import FaceDB
 
 /// 逐行对照官方 iOS Demo：
 /// - engine/ASFVideoProcessor.m
@@ -112,7 +113,43 @@
                                combinedMask:combinedMask];
   self.inited = (code == MOK);
   NSLog(@"[ArcsoftEngineManager] initEngine result: %d", code);
+
+  if (self.inited) {
+      [self loadFacesFromDB];
+  }
+
   return code;
+}
+
+- (void)loadFacesFromDB {
+    NSArray<FaceRecord *> *faces = [[FaceDB sharedInstance] getAllFaces];
+
+    // Clear current maps
+    [self.userToSearchId removeAllObjects];
+    [self.searchIdToUser removeAllObjects];
+    self.nextSearchId = 1000;
+
+    for (FaceRecord *record in faces) {
+        int searchId = self.nextSearchId++;
+
+        ASF_FaceFeature featureStruct = {0};
+        featureStruct.feature = (MByte *)record.featureData.bytes;
+        featureStruct.featureSize = (MInt32)record.featureData.length;
+
+        ASF_FaceFeatureInfo info = {0};
+        info.searchId = searchId;
+        info.feature = &featureStruct;
+        info.tag = "";
+
+        MRESULT mr = [self.engine registerSingleFaceFeatureWithFeatureInfo:&info];
+        if (mr == MOK) {
+            self.userToSearchId[record.userId] = @(searchId);
+            self.searchIdToUser[@(searchId)] = record.userId;
+        } else {
+            NSLog(@"[ArcsoftEngineManager] Failed to register face from DB: %@, code=%ld", record.userId, (long)mr);
+        }
+    }
+    NSLog(@"[ArcsoftEngineManager] Loaded %lu faces from DB", (unsigned long)self.userToSearchId.count);
 }
 
 /**
@@ -341,17 +378,23 @@
 - (BOOL)faceDBAddOrUpdate:(NSString *)userId featureData:(NSData *)featureData {
     if (!self.inited || !userId.length || !featureData.length) return NO;
 
-    // 1. 检查是否已存在
+    // 1. Save to DB
+    [[FaceDB sharedInstance] addFace:userId feature:featureData];
+
+    // 2. Update Engine
+    // 检查是否已存在
     NSNumber *existingId = self.userToSearchId[userId];
     if (existingId) {
         // 如果已存在，先移除旧的
-        [self faceDBRemove:userId];
+        [self.engine removeFaceFeatureWithSearchId:[existingId intValue]];
+        [self.userToSearchId removeObjectForKey:userId];
+        [self.searchIdToUser removeObjectForKey:existingId];
     }
 
-    // 2. 分配新 ID
+    // 分配新 ID
     int searchId = self.nextSearchId++;
 
-    // 3. 构造注册信息
+    // 构造注册信息
     ASF_FaceFeature featureStruct = {0};
     featureStruct.feature = (MByte *)featureData.bytes;
     featureStruct.featureSize = (MInt32)featureData.length;
@@ -361,10 +404,10 @@
     info.feature = &featureStruct;
     info.tag = "";
 
-    // 4. 调用引擎注册
+    // 调用引擎注册
     MRESULT mr = [self.engine registerSingleFaceFeatureWithFeatureInfo:&info];
     if (mr == MOK) {
-        // 5. 更新映射
+        // 更新映射
         self.userToSearchId[userId] = @(searchId);
         self.searchIdToUser[@(searchId)] = userId;
         return YES;
@@ -379,6 +422,10 @@
 - (BOOL)faceDBRemove:(NSString *)userId {
     if (!self.inited || !userId.length) return NO;
 
+    // 1. Remove from DB
+    [[FaceDB sharedInstance] removeFace:userId];
+
+    // 2. Remove from Engine
     NSNumber *searchId = self.userToSearchId[userId];
     if (!searchId) return NO;
 
@@ -397,6 +444,10 @@
 - (BOOL)faceDBClear {
     if (!self.inited) return NO;
 
+    // 1. Clear DB
+    [[FaceDB sharedInstance] clearAll];
+
+    // 2. Clear Engine
     MRESULT mr = [self.engine clearAllFaceFeature];
 
     [self.userToSearchId removeAllObjects];
@@ -410,14 +461,10 @@
  * 获取人脸库数量
  */
 - (NSInteger)faceDBCount {
-    if (!self.inited) return 0;
+//     if (!self.inited) return 0;
 
-    MInt32 count = 0;
-    MRESULT mr = [self.engine getFaceCount:&count];
-    if (mr == MOK) {
-        return (NSInteger)count;
-    }
-    return 0;
+    // Return count from DB
+    return [[FaceDB sharedInstance] count];
 }
 
 /**

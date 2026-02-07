@@ -33,6 +33,8 @@ repositories {
 dependencies {
   implementation "com.facebook.react:react-android"
   implementation "org.jetbrains.kotlin:kotlin-stdlib"
+  implementation "androidx.room:room-runtime:2.6.1"
+  annotationProcessor "androidx.room:room-compiler:2.6.1"
   // ArcSoft JARs
   implementation files('libs/arcsoft_face.jar')
   implementation files('libs/arcsoft_image_util.jar')
