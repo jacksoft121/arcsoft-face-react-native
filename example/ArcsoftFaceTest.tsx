@@ -274,15 +274,28 @@ export default function TestScreen() {
                     const rotDegress = getFrameRotationDegrees(frame);
                     if (plugin != null) {
                         // @ts-ignore
-                        const result = plugin.call(frame, {saveImage: isCapturing, extractFeature: true}) as DetectFacesResult;
-                        reportFacesToJS({
-                            faces: result.faces,
-                            frameW: frame.width,
-                            frameH: frame.height,
-                            imagePath: result.imagePath,
-                            isFrontCamera: cameraPosition === 'front',
-                            rotDegress: rotDegress,
-                        });
+                        const result = plugin.call(frame, {saveImage: isCapturing, extractFeature: true}) as DetectFacesResult | undefined;
+                        // 添加null检查，确保result不是undefined
+                        if (result != null) {
+                            reportFacesToJS({
+                                faces: result.faces || [],
+                                frameW: frame.width,
+                                frameH: frame.height,
+                                imagePath: result.imagePath,
+                                isFrontCamera: cameraPosition === 'front',
+                                rotDegress: rotDegress,
+                            });
+                        } else {
+                            // 如果result是undefined，报告空的人脸列表
+                            reportFacesToJS({
+                                faces: [],
+                                frameW: frame.width,
+                                frameH: frame.height,
+                                imagePath: undefined,
+                                isFrontCamera: cameraPosition === 'front',
+                                rotDegress: rotDegress,
+                            });
+                        }
                     }
                 } catch (e: any) {
                     console.error('Frame processor error:', e.message);
