@@ -32,17 +32,18 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * ArcSoft FaceEngine lifecycle + helper methods.
- * - Supports NV21 (preview) and BGR24 (image)
+ * ArcSoft FaceEngine 生命周期管理与核心功能封装
+ * 负责与 ArcSoft SDK 进行直接交互，包括引擎初始化、人脸检测、特征提取、属性检测等。
+ * 支持 NV21 (预览流) 和 BGR24 (静态图片) 格式。
  */
 public class ArcsoftEngineManager {
 
   // =========================
-  // Logging
+  // Logging (日志工具)
   // =========================
   private static final String TAG = "ArcsoftFaceRN";
 
-  // 0=OFF,1=ERROR,2=WARN,3=INFO,4=DEBUG,5=VERBOSE
+  // 0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG, 5=VERBOSE
   private static volatile int sLogLevel = 3;
 
   public static void setLogLevel(int level) {
@@ -59,6 +60,7 @@ public class ArcsoftEngineManager {
   private static void d(String msg) { if (le(4)) Log.d(TAG, msg); }
   private static void v(String msg) { if (le(5)) Log.v(TAG, msg); }
 
+  // 属性检测结果封装类
   public static class AttrResult {
     public final int[] ages;
     public final int[] genders;
@@ -94,7 +96,7 @@ public class ArcsoftEngineManager {
   private FaceEngine engine;
   private boolean inited = false;
 
-  // JS tag(id) -> engine searchId
+  // 人脸库映射: JS tag(String id) -> engine searchId (int)
   private final Map<String, Integer> tagToSearchId = new ConcurrentHashMap<>();
   private final AtomicInteger nextSearchId = new AtomicInteger(1);
 
@@ -107,6 +109,12 @@ public class ArcsoftEngineManager {
       return appContext;
   }
 
+  /**
+   * 在线激活 SDK
+   * @param appId 应用ID
+   * @param sdkKey SDK密钥
+   * @return 错误码 (MOK=0 为成功)
+   */
   public synchronized int activateOnline(String appId, String sdkKey) {
     long t0 = System.currentTimeMillis();
     d("activateOnline(appId.len=" + (appId == null ? 0 : appId.length()) + ", sdkKey.len=" + (sdkKey == null ? 0 : sdkKey.length()) + ")");
@@ -121,6 +129,10 @@ public class ArcsoftEngineManager {
     }
   }
 
+  /**
+   * 获取激活文件信息
+   * @return ActiveFileInfo 对象，失败返回 null
+   */
   public synchronized ActiveFileInfo getActiveFileInfo() {
     ActiveFileInfo activeFileInfo = new ActiveFileInfo();
     try {
@@ -137,6 +149,14 @@ public class ArcsoftEngineManager {
     }
   }
 
+  /**
+   * 初始化引擎
+   * @param detectMode 检测模式 (VIDEO/IMAGE)
+   * @param orientPriority 人脸角度优先级
+   * @param maxFaceNum 最大检测人脸数
+   * @param combinedMask 功能组合掩码
+   * @return 错误码
+   */
   public synchronized int initEngine(
           DetectMode detectMode,
           DetectFaceOrientPriority orientPriority,
@@ -162,6 +182,10 @@ public class ArcsoftEngineManager {
     return code;
   }
 
+  /**
+   * 销毁引擎
+   * @return 错误码
+   */
   public synchronized int unInitEngine() {
     long t0 = System.currentTimeMillis();
     d("unInitEngine()");
@@ -184,9 +208,16 @@ public class ArcsoftEngineManager {
   }
 
   // =========================
-  // NV21 Methods
+  // NV21 Methods (视频流处理)
   // =========================
 
+  /**
+   * NV21 人脸检测
+   * @param nv21 图像数据
+   * @param width 宽
+   * @param height 高
+   * @return 检测到的人脸列表
+   */
   public synchronized List<FaceInfo> detectFacesNV21(byte[] nv21, int width, int height) {
     ensureInited();
     long t0 = System.currentTimeMillis();
@@ -201,6 +232,14 @@ public class ArcsoftEngineManager {
     return faces;
   }
 
+  /**
+   * NV21 特征提取
+   * @param nv21 图像数据
+   * @param width 宽
+   * @param height 高
+   * @param faceInfo 人脸信息
+   * @return 提取到的特征，失败返回 null
+   */
   public synchronized FaceFeature extractFeatureNV21(byte[] nv21, int width, int height, FaceInfo faceInfo) {
     ensureInited();
     long t0 = System.currentTimeMillis();
@@ -215,6 +254,9 @@ public class ArcsoftEngineManager {
     return feature;
   }
 
+  /**
+   * NV21 属性检测（年龄、性别、活体等）
+   */
   public synchronized AttrResult processAttributes(byte[] nv21, int width, int height, List<FaceInfo> faces, int combinedMask) {
     ensureInited();
     long t0 = System.currentTimeMillis();
@@ -229,16 +271,17 @@ public class ArcsoftEngineManager {
   }
 
   // =========================
-  // Image (BGR24) Methods
+  // Image (BGR24) Methods (图片处理)
   // =========================
 
+  // 将 Base64 图片解码并转换为 BGR24 格式
   private Object[] decodeImage(String base64) {
     try {
       byte[] decoded = Base64.decode(base64, Base64.DEFAULT);
       Bitmap bitmap = BitmapFactory.decodeByteArray(decoded, 0, decoded.length);
       if (bitmap == null) return null;
 
-      // Align
+      // Align (对齐)
       bitmap = ArcSoftImageUtil.getAlignedBitmap(bitmap, true);
       int w = bitmap.getWidth();
       int h = bitmap.getHeight();
@@ -256,6 +299,9 @@ public class ArcsoftEngineManager {
     }
   }
 
+  /**
+   * 图片人脸检测
+   */
   public synchronized List<FaceInfo> detectFacesImage(String base64) {
     ensureInited();
     long t0 = System.currentTimeMillis();
@@ -277,6 +323,9 @@ public class ArcsoftEngineManager {
     return faces;
   }
 
+  /**
+   * 图片特征提取
+   */
   public synchronized FaceFeature extractFeatureImage(String base64, FaceInfo faceInfo) {
     ensureInited();
     long t0 = System.currentTimeMillis();
@@ -298,6 +347,9 @@ public class ArcsoftEngineManager {
     return feature;
   }
 
+  /**
+   * 图片属性检测
+   */
   public synchronized AttrResult processAttributesImage(String base64, List<FaceInfo> faces, int combinedMask) {
     ensureInited();
     long t0 = System.currentTimeMillis();
@@ -319,9 +371,10 @@ public class ArcsoftEngineManager {
   }
 
   // =========================
-  // Common
+  // Common (通用方法)
   // =========================
 
+  // 获取属性检测结果
   private AttrResult getAttrResult(List<FaceInfo> faces) {
     // Age
     List<AgeInfo> ageInfos = new ArrayList<>();
@@ -364,6 +417,12 @@ public class ArcsoftEngineManager {
     return new AttrResult(ages, genders, liveness, rolls, pitchs, yaws);
   }
 
+  /**
+   * 特征比对
+   * @param f1 特征1
+   * @param f2 特征2
+   * @return 相似度 (0.0 - 1.0)
+   */
   public synchronized float compare(FaceFeature f1, FaceFeature f2) {
     ensureInited();
     long t0 = System.currentTimeMillis();
@@ -379,6 +438,9 @@ public class ArcsoftEngineManager {
     return score;
   }
 
+  /**
+   * Base64 特征比对
+   */
   public synchronized float compareBase64(String base64A, String base64B) {
     v("compareBase64(lenA=" + (base64A == null ? 0 : base64A.length()) + ", lenB=" + (base64B == null ? 0 : base64B.length()) + ")");
     byte[] a = Base64.decode(base64A, Base64.DEFAULT);
@@ -387,8 +449,15 @@ public class ArcsoftEngineManager {
   }
 
   // =========================
-  // Face DB (in-engine DB)
+  // Face DB (人脸库管理 - 内存)
   // =========================
+
+  /**
+   * 注册/更新人脸特征
+   * @param tag 用户ID (String)
+   * @param featureBase64 特征数据 (Base64)
+   * @return 是否成功
+   */
   public synchronized boolean faceDBAddOrUpdate(String tag, String featureBase64) {
     ensureInited();
     long t0 = System.currentTimeMillis();
@@ -415,6 +484,11 @@ public class ArcsoftEngineManager {
     return false;
   }
 
+  /**
+   * 移除人脸特征
+   * @param tag 用户ID
+   * @return 是否成功
+   */
   public synchronized boolean faceDBRemove(String tag) {
     ensureInited();
     d("faceDBRemove(tag=" + tag + ")");
@@ -426,6 +500,9 @@ public class ArcsoftEngineManager {
     return ok;
   }
 
+  /**
+   * 清空人脸库
+   */
   public synchronized void faceDBClear() {
     ensureInited();
     d("faceDBClear(count=" + tagToSearchId.size() + ")");
@@ -435,6 +512,9 @@ public class ArcsoftEngineManager {
     tagToSearchId.clear();
   }
 
+  /**
+   * 获取人脸库数量
+   */
   public synchronized int faceDBCount() {
     ensureInited();
     int c;
@@ -443,6 +523,11 @@ public class ArcsoftEngineManager {
     return c;
   }
 
+  /**
+   * 搜索人脸 (1:N)
+   * @param featureBase64 待搜索特征 (Base64)
+   * @return 搜索结果 (SearchResult)，未找到返回 null
+   */
   public synchronized SearchResult faceDBSearchTop1(String featureBase64) {
     ensureInited();
     long t0 = System.currentTimeMillis();

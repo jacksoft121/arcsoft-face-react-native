@@ -3,12 +3,10 @@
 #import <stdarg.h>
 
 #import "ArcsoftEngineManager.h"
-#import "ArcsoftFaceDB.h"
 #import "PixelBufferUtils.h"
 
 @interface ArcsoftFaceModule ()
 @property(nonatomic, strong) ArcsoftEngineManager *engineManager;
-@property(nonatomic, strong) ArcsoftFaceDB *faceDB;
 @end
 
 @implementation ArcsoftFaceModule
@@ -16,7 +14,7 @@
 RCT_EXPORT_MODULE(ArcsoftFace)
 
 // =========================
-// Logging
+// Logging (日志工具)
 // =========================
 static NSInteger ASF_LOG_LEVEL = 3;
 
@@ -56,8 +54,7 @@ static inline void asf_logE(NSError * _Nullable err, NSString *fmt, ...) {
 - (instancetype)init {
   if (self = [super init]) {
     @try {
-        _engineManager = [ArcsoftEngineManager sharedInstance]; // Use shared instance
-        _faceDB = [[ArcsoftFaceDB alloc] init];
+        _engineManager = [ArcsoftEngineManager sharedInstance]; // 使用单例
         NSLog(@"[ArcsoftFaceRN] Module initialized successfully");
     } @catch (NSException *exception) {
         NSLog(@"[ArcsoftFaceRN] Module initialization failed: %@", exception);
@@ -70,19 +67,22 @@ static inline void asf_logE(NSError * _Nullable err, NSString *fmt, ...) {
   return NO;
 }
 
-#pragma mark - Helpers
+#pragma mark - Helpers (辅助方法)
 
+// Base64 字符串转 NSData
 static NSData * _Nullable DataFromBase64(NSString * _Nullable base64) {
   if (base64 == nil) return nil;
   return [[NSData alloc] initWithBase64EncodedString:base64 options:0];
 }
 
+// Base64 字符串转 UIImage
 static UIImage * _Nullable ImageFromBase64(NSString * _Nullable base64) {
     NSData *data = DataFromBase64(base64);
     if (!data) return nil;
     return [UIImage imageWithData:data];
 }
 
+// 将 NSData (NV21/RGB) 转换为 ArcSoft 的 ASVLOFFSCREEN 结构体
 static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSString *formatStr) {
     ASVLOFFSCREEN offscreen = {0};
     offscreen.i32Width = width;
@@ -107,6 +107,7 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
         offscreen.pi32Pitch[0] = width * 3;
         offscreen.ppu8Plane[0] = (MUInt8 *)data.bytes;
     } else {
+        // 默认 NV21
         offscreen.u32PixelArrayFormat = ASVL_PAF_NV21;
         offscreen.pi32Pitch[0] = width;
         offscreen.pi32Pitch[1] = width;
@@ -117,8 +118,11 @@ static ASVLOFFSCREEN OffscreenFromData(NSData *data, int width, int height, NSSt
     return offscreen;
 }
 
-#pragma mark - Exported Methods
+#pragma mark - Exported Methods (导出给 JS 的方法)
 
+/**
+ * 设置日志级别
+ */
 RCT_EXPORT_METHOD(setLogLevel:(double)level
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
@@ -132,6 +136,9 @@ RCT_EXPORT_METHOD(setLogLevel:(double)level
   }
 }
 
+/**
+ * 在线激活 SDK
+ */
 RCT_EXPORT_METHOD(activateOnline:(NSString *)appId
                   sdkKey:(NSString *)sdkKey
                   resolve:(RCTPromiseResolveBlock)resolve
@@ -152,6 +159,9 @@ RCT_EXPORT_METHOD(activateOnline:(NSString *)appId
   }
 }
 
+/**
+ * 获取激活文件信息
+ */
 RCT_EXPORT_METHOD(getActiveFileInfo:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
@@ -170,6 +180,9 @@ RCT_EXPORT_METHOD(getActiveFileInfo:(RCTPromiseResolveBlock)resolve
     }
 }
 
+/**
+ * 初始化引擎
+ */
 RCT_EXPORT_METHOD(initEngine:(NSDictionary *)options
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
@@ -178,13 +191,13 @@ RCT_EXPORT_METHOD(initEngine:(NSDictionary *)options
       long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
       asf_logI(@"initEngine start");
 
-      // Default values
+      // 默认值
       ASF_DetectMode detectMode = ASF_DETECT_MODE_IMAGE;
       ASF_OrientPriority orientPriority = ASF_OP_0_ONLY;
       int maxFaceNum = 1;
-      int combinedMask = ASF_FACE_DETECT | ASF_FACERECOGNITION; // Default mask
+      int combinedMask = ASF_FACE_DETECT | ASF_FACERECOGNITION; // 默认开启检测和识别
 
-      // Safe parsing
+      // 解析参数
       if (options && [options isKindOfClass:[NSDictionary class]]) {
           asf_logI(@"initEngine parsing options");
 
@@ -208,7 +221,7 @@ RCT_EXPORT_METHOD(initEngine:(NSDictionary *)options
               maxFaceNum = [(NSNumber *)maxNum intValue];
           }
 
-          // Flags
+          // 功能开关
           NSObject *enableAge = [options objectForKey:@"enableAge"];
           if (enableAge && [enableAge respondsToSelector:@selector(boolValue)] && [(NSNumber *)enableAge boolValue]) combinedMask |= ASF_AGE;
 
@@ -240,6 +253,9 @@ RCT_EXPORT_METHOD(initEngine:(NSDictionary *)options
   }
 }
 
+/**
+ * 销毁引擎
+ */
 RCT_EXPORT_METHOD(unInitEngine:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
@@ -253,6 +269,9 @@ RCT_EXPORT_METHOD(unInitEngine:(RCTPromiseResolveBlock)resolve
   resolve(@(0));
 }
 
+/**
+ * NV21 人脸检测
+ */
 RCT_EXPORT_METHOD(detectFacesNV21:(NSArray *)nv21
                   width:(double)width
                   height:(double)height
@@ -290,6 +309,9 @@ RCT_EXPORT_METHOD(detectFacesNV21:(NSArray *)nv21
   resolve(faces);
 }
 
+/**
+ * NV21 特征提取
+ */
 RCT_EXPORT_METHOD(extractFeatureNV21:(NSArray *)nv21
                   width:(double)width
                   height:(double)height
@@ -387,6 +409,9 @@ RCT_EXPORT_METHOD(getFace3DAngleNV21:(NSArray *)nv21
 // Image (Base64)
 // =========================
 
+/**
+ * Base64 图片人脸检测
+ */
 RCT_EXPORT_METHOD(detectFacesImage:(NSString *)base64
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
@@ -408,6 +433,9 @@ RCT_EXPORT_METHOD(detectFacesImage:(NSString *)base64
     resolve(faces);
 }
 
+/**
+ * Base64 图片特征提取
+ */
 RCT_EXPORT_METHOD(extractFeatureImage:(NSString *)base64
                   face:(NSDictionary *)face
                   resolve:(RCTPromiseResolveBlock)resolve
@@ -484,6 +512,9 @@ RCT_EXPORT_METHOD(getFace3DAngleImage:(NSString *)base64
     resolve([self.engineManager getFace3DAngles]);
 }
 
+/**
+ * 特征比对 (1:1)
+ */
 RCT_EXPORT_METHOD(compareFeature:(NSDictionary *)f1
                   f2:(NSDictionary *)f2
                   resolve:(RCTPromiseResolveBlock)resolve
@@ -508,96 +539,111 @@ RCT_EXPORT_METHOD(compareFeature:(NSDictionary *)f1
   resolve(@(score));
 }
 
-RCT_EXPORT_METHOD(faceDBAdd:(NSString *)userId
+/**
+ * 注册人脸特征
+ */
+RCT_EXPORT_METHOD(registerFaceFeature:(NSString *)userId
                   feature:(NSDictionary *)feature
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
-  asf_logI(@"faceDBAdd(userId=%@)", userId);
+  asf_logI(@"registerFaceFeature(userId=%@)", userId);
 
   NSData *d = DataFromBase64(feature[@"dataBase64"]);
   if (!d) {
-    asf_logE(nil, @"faceDBAdd failed: bad feature");
+    asf_logE(nil, @"registerFaceFeature failed: bad feature");
     reject(@"BAD_FEATURE", @"feature.dataBase64 required", nil);
     return;
   }
 
-  BOOL success = [self.faceDB upsertFeatureData:d forUserId:userId withEngine:self.engineManager.engine];
+  BOOL success = [self.engineManager faceDBAddOrUpdate:userId featureData:d];
 
   long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
-  asf_logD(@"faceDBAdd => ok=%d, cost=%lldms", success, cost);
+  asf_logD(@"registerFaceFeature => ok=%d, cost=%lldms", success, cost);
 
   resolve(@(success));
 }
 
-RCT_EXPORT_METHOD(faceDBRemove:(NSString *)userId
+/**
+ * 移除人脸特征
+ */
+RCT_EXPORT_METHOD(removeFaceFeature:(NSString *)userId
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
-  asf_logI(@"faceDBRemove(userId=%@)", userId);
+  asf_logI(@"removeFaceFeature(userId=%@)", userId);
 
-  BOOL success = [self.faceDB removeFeatureForUserId:userId withEngine:self.engineManager.engine];
+  BOOL success = [self.engineManager faceDBRemove:userId];
 
   long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
-  asf_logD(@"faceDBRemove => ok=%d, cost=%lldms", success, cost);
+  asf_logD(@"removeFaceFeature => ok=%d, cost=%lldms", success, cost);
 
   resolve(@(success));
 }
 
-RCT_EXPORT_METHOD(faceDBSearch:(NSDictionary *)feature
+/**
+ * 搜索人脸 (1:N)
+ */
+RCT_EXPORT_METHOD(searchFaceFeature:(NSDictionary *)feature
                   threshold:(double)threshold
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
-  asf_logD(@"faceDBSearch(threshold=%f)", threshold);
+  asf_logD(@"searchFaceFeature(threshold=%f)", threshold);
 
   NSData *d = DataFromBase64(feature[@"dataBase64"]);
   if (!d) {
-    asf_logE(nil, @"faceDBSearch failed: bad feature");
+    asf_logE(nil, @"searchFaceFeature failed: bad feature");
     reject(@"BAD_FEATURE", @"feature.dataBase64 required", nil);
     return;
   }
 
-  NSDictionary *result = [self.faceDB searchWithEngine:self.engineManager.engine featureData:d threshold:(float)threshold];
+  NSDictionary *result = [self.engineManager faceDBSearchTop1:d threshold:(float)threshold];
 
   long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
 
   if (result) {
-      asf_logD(@"faceDBSearch => id=%@, score=%@, cost=%lldms", result[@"id"], result[@"score"], cost);
+      asf_logD(@"searchFaceFeature => id=%@, score=%@, cost=%lldms", result[@"id"], result[@"score"], cost);
       resolve(result);
   } else {
-      asf_logD(@"faceDBSearch => null, cost=%lldms", cost);
+      asf_logD(@"searchFaceFeature => null, cost=%lldms", cost);
       resolve(@{ @"id": [NSNull null], @"score": @(0) });
   }
 }
 
-RCT_EXPORT_METHOD(faceDBClear:(RCTPromiseResolveBlock)resolve
+/**
+ * 清空人脸库
+ */
+RCT_EXPORT_METHOD(clearAllFaceFeature:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
-  asf_logI(@"faceDBClear()");
+  asf_logI(@"clearAllFaceFeature()");
 
-  BOOL success = [self.faceDB clearWithEngine:self.engineManager.engine];
+  BOOL success = [self.engineManager faceDBClear];
 
   long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
-  asf_logD(@"faceDBClear => ok=%d, cost=%lldms", success, cost);
+  asf_logD(@"clearAllFaceFeature => ok=%d, cost=%lldms", success, cost);
 
   resolve(@(success));
 }
 
-RCT_EXPORT_METHOD(faceDBCount:(RCTPromiseResolveBlock)resolve
+/**
+ * 获取人脸库数量
+ */
+RCT_EXPORT_METHOD(getFaceCount:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
   long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
-  asf_logD(@"faceDBCount()");
+  asf_logD(@"getFaceCount()");
 
-  NSInteger count = [self.faceDB countWithEngine:self.engineManager.engine];
+  NSInteger count = [self.engineManager faceDBCount];
 
   long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
-  asf_logD(@"faceDBCount => %ld, cost=%lldms", (long)count, cost);
+  asf_logD(@"getFaceCount => %ld, cost=%lldms", (long)count, cost);
 
   resolve(@(count));
 }

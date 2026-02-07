@@ -30,20 +30,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * TurboModule JS API alignment:
- * - setLogLevel(level)
- * - activateOnline(appId, sdkKey)
- * - getActiveFileInfo()
- * - initEngine(options)
- * - unInitEngine()
- * - detectFacesNV21(nv21, width, height) -> FaceInfo[]
- * - extractFeatureNV21(nv21, width, height, face) -> FaceFeature | null
- * - compareFeature(f1, f2) -> number
- * - getAgeNV21/getGenderNV21/getLivenessNV21/getFace3DAngleNV21
- * - detectFacesImage(base64) -> FaceInfo[]
- * - extractFeatureImage(base64, face) -> FaceFeature | null
- * - getAgeImage/getGenderImage/getLivenessImage/getFace3DAngleImage
- * - faceDBAdd/remove/clear/count/search
+ * ArcSoft Face SDK React Native 模块
+ * 封装了 ArcSoft SDK 的核心功能，供 JS 层调用。
  */
 public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
 
@@ -66,8 +54,10 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
   }
 
   // -------------------------
-  // Helpers
+  // Helpers (辅助方法)
   // -------------------------
+
+  // 将 JS 数组转换为 NV21 byte 数组
   private static byte[] nv21FromReadableArray(ReadableArray arr) {
     int len = arr.size();
     byte[] out = new byte[len];
@@ -77,6 +67,7 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     return out;
   }
 
+  // 将 Android Rect 转换为 JS 对象
   private static WritableMap rectToMap(Rect r) {
     WritableMap m = Arguments.createMap();
     m.putInt("left", r.left);
@@ -86,6 +77,7 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     return m;
   }
 
+  // 将 JS 对象转换为 Android Rect
   private static Rect rectFromMap(ReadableMap m) {
     return new Rect(
             m.getInt("left"),
@@ -95,6 +87,7 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     );
   }
 
+  // 将 3D 角度转换为 JS 对象
   private static WritableMap face3dToMap(Face3DAngle a) {
     WritableMap m = Arguments.createMap();
     m.putDouble("roll", a != null ? a.getRoll() : 0);
@@ -103,6 +96,7 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     return m;
   }
 
+  // 将 FaceInfo 转换为 JS 对象
   private static WritableMap faceInfoToMap(FaceInfo fi) {
     WritableMap m = Arguments.createMap();
     m.putMap("rect", rectToMap(fi.getRect()));
@@ -121,6 +115,7 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     return m;
   }
 
+  // 将 JS 对象转换为 FaceInfo
   private static FaceInfo faceInfoFromMap(ReadableMap m) {
     ReadableMap rectMap = m.getMap("rect");
     int orient = m.getInt("orient");
@@ -140,6 +135,7 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     return fi;
   }
 
+  // 将 JS 数组转换为 FaceInfo 列表
   private static List<FaceInfo> faceInfosFromReadableArray(ReadableArray arr) {
     List<FaceInfo> out = new ArrayList<>();
     for (int i = 0; i < arr.size(); i++) {
@@ -149,11 +145,12 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
   }
 
   // -------------------------
-  // Public JS methods
+  // Public JS methods (导出给 JS 的方法)
   // -------------------------
 
   /**
-   * 0=OFF,1=ERROR,2=WARN,3=INFO,4=DEBUG,5=VERBOSE
+   * 设置日志级别
+   * @param level 0=OFF, 1=ERROR, 2=WARN, 3=INFO, 4=DEBUG, 5=VERBOSE
    */
   @ReactMethod
   public void setLogLevel(int level, Promise promise) {
@@ -166,6 +163,11 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     }
   }
 
+  /**
+   * 在线激活 SDK
+   * @param appId 应用ID
+   * @param sdkKey SDK密钥
+   */
   @ReactMethod
   public void activateOnline(String appId, String sdkKey, Promise promise) {
     long t0 = System.currentTimeMillis();
@@ -180,6 +182,9 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     }
   }
 
+  /**
+   * 获取激活文件信息
+   */
   @ReactMethod
   public void getActiveFileInfo(Promise promise) {
     long t0 = System.currentTimeMillis();
@@ -196,8 +201,8 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
       map.putString("platform", info.getPlatform());
       map.putString("sdkVersion", info.getSdkVersion());
       map.putString("fileVersion", info.getFileVersion());
-      map.putString("expireTime", info.getEndTime()); // Use getEndTime for Android
-      map.putString("deviceFingerprint", ""); // Not available on Android
+      map.putString("expireTime", info.getEndTime()); // Android 使用 getEndTime
+      map.putString("deviceFingerprint", ""); // Android 暂无
       Log.d(TAG, "getActiveFileInfo => ok, cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(map);
     } catch (Throwable t) {
@@ -206,6 +211,10 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     }
   }
 
+  /**
+   * 初始化引擎
+   * @param optionsJson 配置参数 JSON 字符串
+   */
   @ReactMethod
   public void initEngine(String optionsJson, Promise promise) {
     long t0 = System.currentTimeMillis();
@@ -254,6 +263,9 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     }
   }
 
+  /**
+   * 销毁引擎
+   */
   @ReactMethod
   public void unInitEngine(Promise promise) {
     long t0 = System.currentTimeMillis();
@@ -269,9 +281,12 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
   }
 
   // =========================
-  // NV21
+  // NV21 (视频流处理)
   // =========================
 
+  /**
+   * NV21 人脸检测
+   */
   @ReactMethod
   public void detectFacesNV21(ReadableArray nv21, int width, int height, Promise promise) {
     long t0 = System.currentTimeMillis();
@@ -289,6 +304,9 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     }
   }
 
+  /**
+   * NV21 特征提取
+   */
   @ReactMethod
   public void extractFeatureNV21(ReadableArray nv21, int width, int height, ReadableMap face, Promise promise) {
     long t0 = System.currentTimeMillis();
@@ -407,9 +425,12 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
   }
 
   // =========================
-  // Image (Base64)
+  // Image (Base64 图片处理)
   // =========================
 
+  /**
+   * Base64 图片人脸检测
+   */
   @ReactMethod
   public void detectFacesImage(String base64, Promise promise) {
     long t0 = System.currentTimeMillis();
@@ -426,6 +447,9 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     }
   }
 
+  /**
+   * Base64 图片特征提取
+   */
   @ReactMethod
   public void extractFeatureImage(String base64, ReadableMap face, Promise promise) {
     long t0 = System.currentTimeMillis();
@@ -534,6 +558,9 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     }
   }
 
+  /**
+   * 特征比对 (1:1)
+   */
   @ReactMethod
   public void compareFeature(ReadableMap f1, ReadableMap f2, Promise promise) {
     long t0 = System.currentTimeMillis();
@@ -551,69 +578,85 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
   }
 
   // -------------------------
-  // Face DB
+  // Face DB (人脸库管理)
   // -------------------------
+
+  /**
+   * 注册人脸特征
+   */
   @ReactMethod
-  public void faceDBAdd(String id, ReadableMap feature, Promise promise) {
+  public void registerFaceFeature(String id, ReadableMap feature, Promise promise) {
     long t0 = System.currentTimeMillis();
-    Log.d(TAG, "faceDBAdd(id=" + id + ")");
+    Log.d(TAG, "registerFaceFeature(id=" + id + ")");
     try {
       String b64 = feature.getString("dataBase64");
       boolean ok = engineManager.faceDBAddOrUpdate(id, b64);
-      Log.d(TAG, "faceDBAdd => ok=" + ok + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+      Log.d(TAG, "registerFaceFeature => ok=" + ok + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(ok);
     } catch (Throwable t) {
-      Log.e(TAG, "faceDBAdd failed", t);
-      promise.reject("faceDBAdd_failed", t);
+      Log.e(TAG, "registerFaceFeature failed", t);
+      promise.reject("registerFaceFeature_failed", t);
     }
   }
 
+  /**
+   * 移除人脸特征
+   */
   @ReactMethod
-  public void faceDBRemove(String id, Promise promise) {
+  public void removeFaceFeature(String id, Promise promise) {
     long t0 = System.currentTimeMillis();
-    Log.d(TAG, "faceDBRemove(id=" + id + ")");
+    Log.d(TAG, "removeFaceFeature(id=" + id + ")");
     try {
       boolean ok = engineManager.faceDBRemove(id);
-      Log.d(TAG, "faceDBRemove => ok=" + ok + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+      Log.d(TAG, "removeFaceFeature => ok=" + ok + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(ok);
     } catch (Throwable t) {
-      Log.e(TAG, "faceDBRemove failed", t);
-      promise.reject("faceDBRemove_failed", t);
+      Log.e(TAG, "removeFaceFeature failed", t);
+      promise.reject("removeFaceFeature_failed", t);
     }
   }
 
+  /**
+   * 清空人脸库
+   */
   @ReactMethod
-  public void faceDBClear(Promise promise) {
+  public void clearAllFaceFeature(Promise promise) {
     long t0 = System.currentTimeMillis();
-    Log.d(TAG, "faceDBClear()");
+    Log.d(TAG, "clearAllFaceFeature()");
     try {
       engineManager.faceDBClear();
-      Log.d(TAG, "faceDBClear => ok, cost=" + (System.currentTimeMillis() - t0) + "ms");
+      Log.d(TAG, "clearAllFaceFeature => ok, cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(null);
     } catch (Throwable t) {
-      Log.e(TAG, "faceDBClear failed", t);
-      promise.reject("faceDBClear_failed", t);
+      Log.e(TAG, "clearAllFaceFeature failed", t);
+      promise.reject("clearAllFaceFeature_failed", t);
     }
   }
 
+  /**
+   * 获取人脸库数量
+   */
   @ReactMethod
-  public void faceDBCount(Promise promise) {
+  public void getFaceCount(Promise promise) {
     long t0 = System.currentTimeMillis();
-    Log.d(TAG, "faceDBCount()");
+    Log.d(TAG, "getFaceCount()");
     try {
       int c = engineManager.faceDBCount();
-      Log.d(TAG, "faceDBCount => " + c + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+      Log.d(TAG, "getFaceCount => " + c + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(c);
     } catch (Throwable t) {
-      Log.e(TAG, "faceDBCount failed", t);
-      promise.reject("faceDBCount_failed", t);
+      Log.e(TAG, "getFaceCount failed", t);
+      promise.reject("getFaceCount_failed", t);
     }
   }
 
+  /**
+   * 搜索人脸 (1:N)
+   */
   @ReactMethod
-  public void faceDBSearch(ReadableMap feature, double threshold, Promise promise) {
+  public void searchFaceFeature(ReadableMap feature, double threshold, Promise promise) {
     long t0 = System.currentTimeMillis();
-    Log.d(TAG, "faceDBSearch(threshold=" + threshold + ")");
+    Log.d(TAG, "searchFaceFeature(threshold=" + threshold + ")");
     try {
       String b64 = feature.getString("dataBase64");
       SearchResult sr = engineManager.faceDBSearchTop1(b64);
@@ -621,7 +664,7 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
       if (sr == null || sr.getFaceFeatureInfo() == null) {
         res.putNull("id");
         res.putDouble("score", 0);
-        Log.d(TAG, "faceDBSearch => null, cost=" + (System.currentTimeMillis() - t0) + "ms");
+        Log.d(TAG, "searchFaceFeature => null, cost=" + (System.currentTimeMillis() - t0) + "ms");
         promise.resolve(res);
         return;
       }
@@ -634,11 +677,11 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
         res.putString("id", tag);
         res.putDouble("score", score);
       }
-      Log.d(TAG, "faceDBSearch => id=" + tag + ", score=" + score + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+      Log.d(TAG, "searchFaceFeature => id=" + tag + ", score=" + score + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(res);
     } catch (Throwable t) {
-      Log.e(TAG, "faceDBSearch failed", t);
-      promise.reject("faceDBSearch_failed", t);
+      Log.e(TAG, "searchFaceFeature failed", t);
+      promise.reject("searchFaceFeature_failed", t);
     }
   }
 }

@@ -18,6 +18,7 @@ export interface DetectFacesResult {
 
 export interface DetectFacesOptions {
   saveImage?: boolean;
+  extractFeature?: boolean;
 }
 
 export function detectFaces(frame: Frame, options?: DetectFacesOptions): DetectFacesResult {
@@ -131,20 +132,20 @@ export const getFace3DAngleImage = (
     ArcsoftFaceNative.getFace3DAngleImage(base64, faces);
 
 /** 人脸库 */
-export const faceDBAdd = (id: string, feature: FaceFeature): Promise<boolean> =>
-    ArcsoftFaceNative.faceDBAdd(id, feature);
+export const registerFaceFeature = (id: string, feature: FaceFeature): Promise<boolean> =>
+    ArcsoftFaceNative.registerFaceFeature(id, feature);
 
-export const faceDBRemove = (id: string): Promise<boolean> => ArcsoftFaceNative.faceDBRemove(id);
+export const removeFaceFeature = (id: string): Promise<boolean> => ArcsoftFaceNative.removeFaceFeature(id);
 
-export const faceDBClear = (): Promise<void> => ArcsoftFaceNative.faceDBClear();
+export const clearAllFaceFeature = (): Promise<void> => ArcsoftFaceNative.clearAllFaceFeature();
 
-export const faceDBCount = (): Promise<number> => ArcsoftFaceNative.faceDBCount();
+export const getFaceCount = (): Promise<number> => ArcsoftFaceNative.getFaceCount();
 
-export const faceDBSearch = (
+export const searchFaceFeature = (
     feature: FaceFeature,
     threshold: number = 0
 ): Promise<{ id: string | null; score: number }> =>
-    ArcsoftFaceNative.faceDBSearch(feature, threshold);
+    ArcsoftFaceNative.searchFaceFeature(feature, threshold);
 
 /**
  * 默认导出：一个与原生同名的对象（方便用户 `import ArcsoftFace from 'xxx'`）
@@ -172,11 +173,11 @@ const ArcsoftFace = {
   getLivenessImage,
   getFace3DAngleImage,
 
-  faceDBAdd,
-  faceDBRemove,
-  faceDBClear,
-  faceDBCount,
-  faceDBSearch,
+  registerFaceFeature,
+  removeFaceFeature,
+  clearAllFaceFeature,
+  getFaceCount,
+  searchFaceFeature,
   
   // Frame Processor Plugin
   detectFaces,

@@ -14,6 +14,8 @@ export type FaceInfo = {
   faceDataBase64?: string;
   /** Face ID (if available) */
   faceId?: number;
+  /** Extracted Feature (Base64), if extractFeature is enabled in FrameProcessor */
+  featureBase64?: string;
 };
 
 export type FaceFeature = {
@@ -89,11 +91,11 @@ export interface Spec {
   ): Promise<Array<{ roll: number; pitch: number; yaw: number }>>;
 
   /** 人脸库（JS 侧 id -> 原生侧特征映射） */
-  faceDBAdd(id: string, feature: FaceFeature): Promise<boolean>;
-  faceDBRemove(id: string): Promise<boolean>;
-  faceDBClear(): Promise<void>;
-  faceDBCount(): Promise<number>;
-  faceDBSearch(
+  registerFaceFeature(id: string, feature: FaceFeature): Promise<boolean>;
+  removeFaceFeature(id: string): Promise<boolean>;
+  clearAllFaceFeature(): Promise<void>;
+  getFaceCount(): Promise<number>;
+  searchFaceFeature(
     feature: FaceFeature,
     threshold?: number
   ): Promise<{ id: string | null; score: number }>;

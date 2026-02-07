@@ -42,9 +42,11 @@ import {
     getGenderImage,
     getLivenessImage,
     getFace3DAngleImage,
-    faceDBCount,
-    faceDBClear,
-    faceDBRemove,
+    getFaceCount,
+    clearAllFaceFeature,
+    removeFaceFeature,
+    registerFaceFeature,
+    searchFaceFeature,
     type FaceInfo,
     type FaceFeature,
     type ActiveFileInfo,
@@ -65,6 +67,7 @@ type FaceBoxUI = {
     height: number;
     orient: number;
     color: string;
+    name?: string;
 };
 
 export default function TestScreen() {
@@ -170,31 +173,31 @@ export default function TestScreen() {
 
     const refreshDBCount = useCallback(async () => {
         try {
-            const c = await faceDBCount();
+            const c = await getFaceCount();
             setDbCount(c);
-            appendLog(`faceDBCount => ${c}`);
+            appendLog(`getFaceCount => ${c}`);
         } catch (e: any) {
-            appendLog(`faceDBCount error: ${String(e?.message || e)}`);
+            appendLog(`getFaceCount error: ${String(e?.message || e)}`);
         }
     }, [appendLog]);
 
     const doClearDB = useCallback(async () => {
         try {
-            await faceDBClear();
-            appendLog('faceDBClear done');
+            await clearAllFaceFeature();
+            appendLog('clearAllFaceFeature done');
             refreshDBCount();
         } catch (e: any) {
-            appendLog(`faceDBClear error: ${String(e?.message || e)}`);
+            appendLog(`clearAllFaceFeature error: ${String(e?.message || e)}`);
         }
     }, [appendLog, refreshDBCount]);
 
     const doRemoveFace = useCallback(async () => {
         try {
-            const ok = await faceDBRemove(userId);
-            appendLog(`faceDBRemove(${userId}) => ${ok}`);
+            const ok = await removeFaceFeature(userId);
+            appendLog(`removeFaceFeature(${userId}) => ${ok}`);
             refreshDBCount();
         } catch (e: any) {
-            appendLog(`faceDBRemove error: ${String(e?.message || e)}`);
+            appendLog(`removeFaceFeature error: ${String(e?.message || e)}`);
         }
     }, [appendLog, refreshDBCount, userId]);
 
@@ -271,7 +274,7 @@ export default function TestScreen() {
                     const rotDegress = getFrameRotationDegrees(frame);
                     if (plugin != null) {
                         // @ts-ignore
-                        const result = plugin.call(frame, {saveImage: isCapturing}) as DetectFacesResult;
+                        const result = plugin.call(frame, {saveImage: isCapturing, extractFeature: true}) as DetectFacesResult;
                         reportFacesToJS({
                             faces: result.faces,
                             frameW: frame.width,
@@ -294,12 +297,53 @@ export default function TestScreen() {
     }, [device, hasPermission]);
 
     const doRegisterToDB = useCallback(async () => {
-        Alert.alert('提示', '此功能在 Frame Processor 流程中尚未实现');
-    }, []);
+        if (!lastFaceRef.current) {
+            Alert.alert('提示', '未检测到人脸');
+            return;
+        }
+        try {
+            const face = lastFaceRef.current;
+            if (!face.featureBase64) {
+                Alert.alert('提示', '未提取到特征');
+                return;
+            }
+            const feature: FaceFeature = { dataBase64: face.featureBase64 };
+            const ok = await registerFaceFeature(userId, feature);
+            appendLog(`registerFaceFeature(${userId}) => ${ok}`);
+            refreshDBCount();
+            if (ok) Alert.alert('成功', '注册成功');
+            else Alert.alert('失败', '注册失败');
+        } catch (e: any) {
+            appendLog(`doRegisterToDB error: ${String(e?.message || e)}`);
+            Alert.alert('异常', String(e?.message || e));
+        }
+    }, [userId, appendLog, refreshDBCount]);
 
     const doSearchDB = useCallback(async () => {
-        Alert.alert('提示', '此功能在 Frame Processor 流程中尚未实现');
-    }, []);
+        if (!lastFaceRef.current) {
+            Alert.alert('提示', '未检测到人脸');
+            return;
+        }
+        try {
+            const face = lastFaceRef.current;
+            if (!face.featureBase64) {
+                Alert.alert('提示', '未提取到特征');
+                return;
+            }
+            const feature: FaceFeature = { dataBase64: face.featureBase64 };
+            // 阈值 0.8
+            const result = await searchFaceFeature(feature, 0.8);
+            appendLog(`searchFaceFeature => ${JSON.stringify(result)}`);
+            if (result && result.id) {
+                Alert.alert('识别成功', `ID: ${result.id}, Score: ${result.score}`);
+            } else {
+                Alert.alert('识别失败', '未匹配到人脸');
+            }
+        } catch (e: any) {
+            appendLog(`doSearchDB error: ${String(e?.message || e)}`);
+            Alert.alert('异常', String(e?.message || e));
+        }
+    }, [appendLog]);
 
     const doProcessImage = useCallback(async () => {
         if (!imageBase64) {
