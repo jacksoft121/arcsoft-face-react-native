@@ -19,6 +19,7 @@ export interface DetectFacesResult {
 export interface DetectFacesOptions {
   saveImage?: boolean;
   extractFeature?: boolean;
+  score?: number;
 }
 
 export function detectFaces(frame: Frame, options?: DetectFacesOptions): DetectFacesResult {

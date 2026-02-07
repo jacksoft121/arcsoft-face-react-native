@@ -16,6 +16,10 @@ export type FaceInfo = {
   faceId?: number;
   /** Extracted Feature (Base64), if extractFeature is enabled in FrameProcessor */
   featureBase64?: string;
+  /** Matched User ID from FaceDB (if extractFeature is enabled and match found) */
+  userId?: string;
+  /** Match Score (if extractFeature is enabled and match found) */
+  score?: number;
 };
 
 export type FaceFeature = {

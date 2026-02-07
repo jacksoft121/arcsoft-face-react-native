@@ -11,6 +11,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import com.arcsoft.face.FaceFeature;
 import com.arcsoft.face.FaceInfo;
+import com.arcsoft.face.SearchResult;
 import com.mrousavy.camera.frameprocessors.Frame;
 import com.mrousavy.camera.frameprocessors.FrameProcessorPlugin;
 import com.mrousavy.camera.frameprocessors.VisionCameraProxy;
@@ -43,6 +44,7 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
       // 1. 解析参数
       boolean saveImage = false;
       boolean extractFeature = false;
+      double scoreThreshold = 0.8; // 默认阈值
       
       if (arguments != null) {
         if (arguments.containsKey("saveImage")) {
@@ -54,6 +56,11 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
           Object val = arguments.get("extractFeature");
           if (val instanceof Boolean) extractFeature = (Boolean) val;
           else if (val instanceof String) extractFeature = Boolean.parseBoolean((String) val);
+        }
+        if (arguments.containsKey("score")) {
+            Object val = arguments.get("score");
+            if (val instanceof Number) scoreThreshold = ((Number) val).doubleValue();
+            else if (val instanceof String) scoreThreshold = Double.parseDouble((String) val);
         }
       }
 
@@ -95,6 +102,18 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
             if (feature != null && feature.getFeatureData() != null) {
                 String b64 = Base64.encodeToString(feature.getFeatureData(), Base64.NO_WRAP);
                 map.put("featureBase64", b64);
+                
+                // 自动搜索人脸库
+                SearchResult searchResult = engineManager.faceDBSearchTop1(b64);
+                if (searchResult != null && searchResult.getFaceFeatureInfo() != null) {
+                    String tag = searchResult.getFaceFeatureInfo().getFaceTag();
+                    float score = searchResult.getMaxSimilar();
+                    // 使用传入的阈值
+                    if (tag != null && score >= scoreThreshold) {
+                        map.put("userId", tag);
+                        map.put("score", (double) score);
+                    }
+                }
             } else {
                 Log.w(TAG, "Feature extraction failed for faceId=" + face.getFaceId());
             }

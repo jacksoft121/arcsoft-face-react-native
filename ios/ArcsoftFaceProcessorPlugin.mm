@@ -26,9 +26,12 @@
   // Check arguments
   BOOL saveImage = NO;
   BOOL extractFeature = NO;
+  double scoreThreshold = 0.8; // 默认阈值
+
   if (arguments) {
       if (arguments[@"saveImage"]) saveImage = [arguments[@"saveImage"] boolValue];
       if (arguments[@"extractFeature"]) extractFeature = [arguments[@"extractFeature"] boolValue];
+      if (arguments[@"score"]) scoreThreshold = [arguments[@"score"] doubleValue];
   }
 
   NSString *imagePath = nil;
@@ -55,6 +58,16 @@
           NSString *featBase64 = [[ArcsoftEngineManager sharedInstance] extractFeature:&offscreen faceRect:rect orient:orient];
           if (featBase64) {
               faceMutable[@"featureBase64"] = featBase64;
+
+              // 自动搜索人脸库
+              NSData *featureData = [[NSData alloc] initWithBase64EncodedString:featBase64 options:0];
+              NSDictionary *searchResult = [[ArcsoftEngineManager sharedInstance] faceDBSearchTop1:featureData threshold:scoreThreshold];
+              if (searchResult) {
+                  faceMutable[@"userId"] = searchResult[@"id"];
+                  faceMutable[@"score"] = searchResult[@"score"];
+              }
+          } else {
+              NSLog(@"[ArcsoftFace] Feature extraction failed for face");
           }
       }
       [enrichedFaces addObject:faceMutable];
