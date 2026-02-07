@@ -141,10 +141,10 @@ export default function TestScreen() {
         detectMode: 'video',
         maxFaceNum: 10,
         scale: 16,
-        enableAge: true,
-        enableGender: true,
-        enableLiveness: true,
-        enable3DAngle: true,
+        enableAge: false,
+        enableGender: false,
+        enableLiveness: false,
+        enable3DAngle: false,
       });
       appendLog(`initEngine code => ${code}`);
       if (code === 0) setInited(true);
