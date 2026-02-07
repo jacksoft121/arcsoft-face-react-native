@@ -19,6 +19,7 @@ import {
     useFrameProcessor,
     VisionCameraProxy, // Import Proxy directly
     type Frame,
+    type CameraPosition,
 } from 'react-native-vision-camera';
 import {runAtTargetFps} from 'react-native-vision-camera';
 import {Worklets} from 'react-native-worklets-core'; // Import Worklets
@@ -111,7 +112,8 @@ function toScoreText(score: number) {
 
 export default function TestScreen() {
     const {hasPermission, requestPermission} = useCameraPermission();
-    const device = useCameraDevice('front');
+    const [cameraPosition, setCameraPosition] = useState<CameraPosition>('front');
+    const device = useCameraDevice(cameraPosition);
     const {width: screenW, height: screenH} = useWindowDimensions();
 
     // Dynamic camera dimensions
@@ -256,9 +258,10 @@ export default function TestScreen() {
             faces: FaceInfo[],
             frameW: number,
             frameH: number,
-            imagePath?: string
+            imagePath?: string,
+            isFrontCamera?:boolean
         }) => {
-            const {faces, frameW, frameH, imagePath} = payload;
+            const {faces, frameW, frameH, imagePath, isFrontCamera} = payload;
             setLastFaceCount(faces.length);
 
             if (imagePath) {
@@ -279,9 +282,8 @@ export default function TestScreen() {
             if (viewW === 0 || viewH === 0) return;
 
 
-            if (Platform.OS === 'android') {
-                // Scale logic (Cover)
-                // Mapped dimensions: frameH x frameW (480 x 640)
+            if (Platform.OS === 'android' && isFrontCamera) {
+                // Android Front: 270 deg rotation (Swap W/H) + Mirror Logic
                 const scaleX = viewW / frameH;
                 const scaleY = viewH / frameW;
                 const scale = Math.max(scaleX, scaleY);
@@ -295,12 +297,7 @@ export default function TestScreen() {
                 const uiBoxes = faces.map((face, i) => {
                     let {left, top, right, bottom} = face.rect;
 
-                    // User provided algorithm:
-                    // left: frameHeight - rect.bottom,
-                    // right: frameHeight - rect.top,
-                    // top: frameWidth - rect.right,
-                    // bottom: frameWidth - rect.left,
-
+                    // Android Front Logic
                     const mappedLeft = frameH - bottom;
                     const mappedRight = frameH - top;
                     const mappedTop = frameW - right;
@@ -322,11 +319,17 @@ export default function TestScreen() {
 
                 setBoxes(uiBoxes);
             } else {
+                // iOS Front/Back OR Android Back
                 // iOS Front: 90 deg rotation (Swap W/H)
-                // Coordinate mapping logic
+                // Android Back: Usually 90 deg rotation (Swap W/H) and NO mirror needed (but iOS logic handles non-mirror X if we adjust)
+
+                // Wait, iOS Front logic (from previous step) was:
+                // x = frameH - (top + h)
+                // y = left
+
+                // If Android Back needs to behave like iOS Front logic:
                 let rotatedFrameW = frameH;
                 let rotatedFrameH = frameW;
-
 
                 const scaleX = viewW / rotatedFrameW;
                 const scaleY = viewH / rotatedFrameH;
@@ -340,7 +343,8 @@ export default function TestScreen() {
                     let w = right - left;
                     let h = bottom - top;
 
-                    const x = frameH - bottom;
+                    // iOS Front Logic (also applied to Android Back as requested)
+                    const x = frameH - bottom; // frameH - (top + h)
                     const y = left;
 
                     // Swap w/h
@@ -370,7 +374,7 @@ export default function TestScreen() {
             'worklet';
             if (!inited) return;
 
-            runAtTargetFps(15, () => {
+            runAtTargetFps(5, () => {
                 'worklet';
                 try {
                     if (plugin != null) {
@@ -381,7 +385,8 @@ export default function TestScreen() {
                             faces: result.faces,
                             frameW: frame.width,
                             frameH: frame.height,
-                            imagePath: result.imagePath
+                            imagePath: result.imagePath,
+                            isFrontCamera: cameraPosition === 'front'
                         });
                     }
                 } catch (e: any) {
@@ -389,7 +394,7 @@ export default function TestScreen() {
                 }
             });
         },
-        [inited, reportFacesToJS, isCapturing],
+        [inited, reportFacesToJS, isCapturing, cameraPosition],
     );
 
     const canUseCamera = useMemo(() => {
@@ -462,6 +467,10 @@ export default function TestScreen() {
     useEffect(() => {
         refreshDBCount();
     }, [refreshDBCount]);
+
+    const toggleCamera = useCallback(() => {
+        setCameraPosition(p => (p === 'front' ? 'back' : 'front'));
+    }, []);
 
     return (
         <SafeAreaView style={styles.root}>
@@ -573,6 +582,12 @@ export default function TestScreen() {
                             disabled={isCapturing}
                         >
                             <Text style={styles.btnText}>{isCapturing ? '正在截图...' : '截图当前帧'}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.btn, {backgroundColor: '#333', marginLeft: 10}]}
+                            onPress={toggleCamera}
+                        >
+                            <Text style={styles.btnText}>切换相机 ({cameraPosition})</Text>
                         </TouchableOpacity>
                     </View>
 
