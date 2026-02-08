@@ -577,10 +577,17 @@ public class ArcsoftEngineManager {
 
   /**
    * 获取所有人脸列表
+   * @param userId 可选的用户ID，如果提供则只返回该用户的数据
    * @return 包含 { "id": userId } 的列表
    */
-  public synchronized List<Map<String, String>> faceDBGetAllFaces() {
-      List<FaceEntity> faces = faceDatabase.faceDao().getAllFaces();
+  public synchronized List<Map<String, String>> faceDBGetAllFaces(String userId) {
+      List<FaceEntity> faces;
+      if (userId != null && !userId.isEmpty()) {
+          faces = faceDatabase.faceDao().getFacesByUserId(userId);
+      } else {
+          faces = faceDatabase.faceDao().getAllFaces();
+      }
+
       List<Map<String, String>> result = new ArrayList<>();
       for (FaceEntity face : faces) {
           Map<String, String> map = new java.util.HashMap<>();

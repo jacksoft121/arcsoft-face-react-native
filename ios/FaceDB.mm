@@ -147,6 +147,38 @@
     return faces;
 }
 
+- (NSArray<FaceRecord *> *)getFacesByUserId:(NSString *)userId {
+    NSMutableArray *faces = [NSMutableArray array];
+    const char *sql = "SELECT id, user_id, feature_data, register_time FROM faces WHERE user_id = ?";
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(_db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, [userId UTF8String], -1, SQLITE_TRANSIENT);
+
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            FaceRecord *record = [[FaceRecord alloc] init];
+
+            record.id = sqlite3_column_int(stmt, 0);
+
+            char *userIdChars = (char *)sqlite3_column_text(stmt, 1);
+            if (userIdChars) {
+                record.userId = [NSString stringWithUTF8String:userIdChars];
+            }
+
+            const void *featureBytes = sqlite3_column_blob(stmt, 2);
+            int featureLen = sqlite3_column_bytes(stmt, 2);
+            if (featureBytes && featureLen > 0) {
+                record.featureData = [NSData dataWithBytes:featureBytes length:featureLen];
+            }
+
+            record.registerTime = sqlite3_column_int64(stmt, 3);
+
+            [faces addObject:record];
+        }
+        sqlite3_finalize(stmt);
+    }
+    return faces;
+}
+
 - (NSInteger)count {
     const char *sql = "SELECT COUNT(*) FROM faces";
     sqlite3_stmt *stmt;

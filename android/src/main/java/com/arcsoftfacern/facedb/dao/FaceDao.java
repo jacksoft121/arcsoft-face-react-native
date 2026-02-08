@@ -15,6 +15,9 @@ public interface FaceDao {
     @Query("SELECT * FROM face")
     List<FaceEntity> getAllFaces();
 
+    @Query("SELECT * FROM face WHERE user_id = :userId")
+    List<FaceEntity> getFacesByUserId(String userId);
+
     @Query("SELECT * FROM face WHERE user_id = :userId LIMIT 1")
     FaceEntity getFaceByUserId(String userId);
 

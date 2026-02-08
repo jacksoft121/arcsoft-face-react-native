@@ -655,11 +655,11 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
    * 获取所有人脸列表
    */
   @ReactMethod
-  public void getAllFaces(Promise promise) {
+  public void getAllFaces(String userId, Promise promise) {
     long t0 = System.currentTimeMillis();
-    Log.d(TAG, "getAllFaces()");
+    Log.d(TAG, "getAllFaces(userId=" + userId + ")");
     try {
-      List<Map<String, String>> faces = engineManager.faceDBGetAllFaces();
+      List<Map<String, String>> faces = engineManager.faceDBGetAllFaces(userId);
       WritableArray out = Arguments.createArray();
       for (Map<String, String> face : faces) {
         WritableMap map = Arguments.createMap();

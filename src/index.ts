@@ -149,8 +149,8 @@ export const searchFaceFeature = (
     ArcsoftFaceNative.searchFaceFeature(feature, threshold);
 
 /** 获取所有人脸列表 */
-export const getAllFaces = (): Promise<Array<{ id: string; userId: string; registerTime: number }>> =>
-    ArcsoftFaceNative.getAllFaces();
+export const getAllFaces = (userId?: string): Promise<Array<{ id: string; userId: string; registerTime: number }>> =>
+    ArcsoftFaceNative.getAllFaces(userId);
 
 /**
  * 注册人脸（通过图片 URL）
@@ -257,10 +257,10 @@ const ArcsoftFace = {
   clearAllFaceFeature,
   getFaceCount,
   searchFaceFeature,
-  
+
   registerFaceFromUrl, // Export new function
   getAllFaces, // Export new function
-  
+
   // Frame Processor Plugin
   detectFaces,
 };

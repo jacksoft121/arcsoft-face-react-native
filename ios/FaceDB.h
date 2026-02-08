@@ -17,6 +17,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)removeFace:(NSString *)userId;
 - (BOOL)clearAll;
 - (NSArray<FaceRecord *> *)getAllFaces;
+- (NSArray<FaceRecord *> *)getFacesByUserId:(NSString *)userId;
 - (NSInteger)count;
 
 @end

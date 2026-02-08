@@ -598,10 +598,18 @@
 
 /**
  * 获取所有人脸列表
+ * @param userId 可选的用户ID，如果提供则只返回该用户的数据
+ * @return 包含 { "id": userId } 的列表
  */
-- (NSArray<NSDictionary *> *)faceDBGetAllFaces {
-    // 从 FaceDB 获取所有记录
-    NSArray<FaceRecord *> *records = [[FaceDB sharedInstance] getAllFaces];
+- (NSArray<NSDictionary *> *)faceDBGetAllFaces:(NSString *)userId {
+    // 从 FaceDB 获取记录
+    NSArray<FaceRecord *> *records;
+    if (userId && userId.length > 0) {
+        records = [[FaceDB sharedInstance] getFacesByUserId:userId];
+    } else {
+        records = [[FaceDB sharedInstance] getAllFaces];
+    }
+
     NSMutableArray *result = [NSMutableArray arrayWithCapacity:records.count];
 
     for (FaceRecord *record in records) {
