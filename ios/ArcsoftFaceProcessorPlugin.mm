@@ -25,14 +25,14 @@
  * @return 返回给 JS 的结果字典
  */
 - (id)callback:(Frame*)frame withArguments:(NSDictionary* _Nullable)arguments {
-  // [Log] 入参日志
+  // [Log] 入参日志 (调试时可开启)
   // NSLog(@"[ArcsoftFace] callback called. arguments: %@", arguments);
 
   CMSampleBufferRef buffer = frame.buffer;
   CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(buffer);
 
   if (!pixelBuffer) {
-      NSLog(@"[ArcsoftFace] Error: pixelBuffer is nil");
+      // NSLog(@"[ArcsoftFace] Error: pixelBuffer is nil");
       return nil;
   }
 
@@ -76,7 +76,7 @@
               };
               int orient = [face[@"orient"] intValue];
 
-              // 获取 faceDataInfo
+              // 获取 faceDataInfo (从 detectFaces 结果中获取)
               NSData *faceDataInfo = face[@"faceDataInfo"];
 
               // 提取特征 (Base64)
@@ -102,12 +102,12 @@
                       faceMutable[@"score"] = searchResult[@"score"];
                   }
               } else {
-                  // 特征提取失败
+                  // 特征提取失败 (可能是人脸质量不高或角度问题)
                   // NSLog(@"[ArcsoftFace] Feature extraction failed");
               }
           }
 
-          // 移除 faceDataInfo，不返回给 JS
+          // 移除 faceDataInfo，不返回给 JS，因为数据量大且 JS 用不到
           [faceMutable removeObjectForKey:@"faceDataInfo"];
 
           [enrichedFaces addObject:faceMutable];
@@ -115,7 +115,7 @@
   }];
 
   if (!enrichedFaces) {
-      NSLog(@"[ArcsoftFace] Warning: enrichedFaces is nil. Block might not have been executed (unsupported format?).");
+      // NSLog(@"[ArcsoftFace] Warning: enrichedFaces is nil. Block might not have been executed (unsupported format?).");
   }
 
   // 4. 构造返回结果
