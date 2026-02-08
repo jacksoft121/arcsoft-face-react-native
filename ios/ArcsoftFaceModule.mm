@@ -431,7 +431,15 @@ RCT_EXPORT_METHOD(detectFacesImage:(NSString *)base64
     long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
     asf_logD(@"detectFacesImage => faces=%lu, cost=%lldms", (unsigned long)faces.count, cost);
 
-    resolve(faces);
+    // 移除 faceDataInfo，避免传回 JS
+    NSMutableArray *cleanFaces = [NSMutableArray arrayWithCapacity:faces.count];
+    for (NSDictionary *face in faces) {
+        NSMutableDictionary *mFace = [face mutableCopy];
+        [mFace removeObjectForKey:@"faceDataInfo"];
+        [cleanFaces addObject:mFace];
+    }
+
+    resolve(cleanFaces);
 }
 
 /**
@@ -451,7 +459,30 @@ RCT_EXPORT_METHOD(extractFeatureImage:(NSString *)base64
         return;
     }
 
-    NSString *featBase64 = [self.engineManager extractFeatureFromImage:image faceInfo:face];
+    NSMutableDictionary *mutableFace = [face mutableCopy];
+    id faceDataInfoObj = mutableFace[@"faceDataInfo"];
+
+    // 如果 faceDataInfo 缺失，重新检测以获取完整信息
+    if (!faceDataInfoObj) {
+        asf_logD(@"extractFeatureImage: faceDataInfo missing, re-detecting faces...");
+        NSArray<NSDictionary *> *faces = [self.engineManager detectFacesFromImage:image];
+        if (faces.count > 0) {
+            // 使用重新检测到的第一个人脸信息 (包含 faceDataInfo)
+            // 注意：这里简单取第一个，如果需要更精确，可以比较 rect
+            mutableFace = [faces[0] mutableCopy];
+            asf_logD(@"extractFeatureImage: re-detected face found");
+        } else {
+            asf_logW(@"extractFeatureImage: re-detection failed (no faces)");
+            resolve([NSNull null]);
+            return;
+        }
+    } else if ([faceDataInfoObj isKindOfClass:[NSString class]]) {
+        // 如果传回来的是 Base64 字符串 (虽然我们目前没传)，转回 NSData
+        NSData *data = [[NSData alloc] initWithBase64EncodedString:faceDataInfoObj options:0];
+        mutableFace[@"faceDataInfo"] = data;
+    }
+
+    NSString *featBase64 = [self.engineManager extractFeatureFromImage:image faceInfo:mutableFace];
 
     long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
 

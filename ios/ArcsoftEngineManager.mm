@@ -177,6 +177,8 @@
 #pragma mark - Image Processing Helpers
 
 // Helper to convert UIImage to ASVLOFFSCREEN
+// 将 UIImage 转换为 ArcSoft SDK 支持的 NV12 格式
+// 解决了直接使用 BGRA 可能导致的颜色空间不支持 (90126) 问题
 - (ASVLOFFSCREEN)offscreenFromImage:(UIImage *)image {
     CGImageRef cgImage = image.CGImage;
     size_t width = CGImageGetWidth(cgImage);
@@ -184,36 +186,77 @@
 
     // 确保宽度是 4 的倍数 (ArcSoft 要求)
     size_t alignedWidth = (width + 3) & ~3;
+    // 确保高度是 2 的倍数 (NV12 要求)
+    size_t alignedHeight = (height + 1) & ~1;
 
-    NSLog(@"[ArcsoftEngineManager] offscreenFromImage: original size=%zux%zu, aligned width=%zu", width, height, alignedWidth);
+    // NSLog(@"[ArcsoftEngineManager] offscreenFromImage: original size=%zux%zu, aligned size=%zux%zu", width, height, alignedWidth, alignedHeight);
 
+    // 1. 创建 BGRA Context
     size_t bitsPerComponent = 8;
     size_t bytesPerRow = alignedWidth * 4;
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
 
     // Explicitly cast malloc's void* to MUInt8*
-    MUInt8 *data = (MUInt8 *)malloc(bytesPerRow * height);
+    MUInt8 *bgraData = (MUInt8 *)malloc(bytesPerRow * alignedHeight);
 
     // 使用对齐后的宽度创建 Context
     // 注意：iOS 上 BGRA 通常使用 kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little
-    // 或者 kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little
-    // 之前的 kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big 实际上是 RGBA
-    // ArcSoft ASVL_PAF_RGB32_B8G8R8A8 对应 BGRA
-    // 我们尝试使用标准的 BGRA 配置
-    CGContextRef context = CGBitmapContextCreate(data, alignedWidth, height, bitsPerComponent, bytesPerRow, colorSpace, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+    CGContextRef context = CGBitmapContextCreate(bgraData, alignedWidth, alignedHeight, bitsPerComponent, bytesPerRow, colorSpace, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
 
     // 绘制原始图片
     CGContextDrawImage(context, CGRectMake(0, 0, width, height), cgImage);
-
-    ASVLOFFSCREEN offscreen = {0};
-    offscreen.u32PixelArrayFormat = ASVL_PAF_RGB32_B8G8R8A8; // BGRA
-    offscreen.i32Width = (int)alignedWidth;
-    offscreen.i32Height = (int)height;
-    offscreen.ppu8Plane[0] = data;
-    offscreen.pi32Pitch[0] = (int)bytesPerRow;
-
     CGContextRelease(context);
     CGColorSpaceRelease(colorSpace);
+
+    // 2. 转换为 NV12 (YUV420SP)
+    // ArcSoft SDK 对 NV12 的支持最好，且能避免颜色空间问题
+    size_t ySize = alignedWidth * alignedHeight;
+    size_t uvSize = alignedWidth * (alignedHeight / 2);
+    MUInt8 *nv12Data = (MUInt8 *)malloc(ySize + uvSize);
+
+    // 简单的 BGRA -> NV12 转换 (CPU)
+    // 注意：这里假设 BGRA 顺序是 B G R A (Little Endian)
+    // Y = 0.299R + 0.587G + 0.114B
+    // U = -0.169R - 0.331G + 0.500B + 128
+    // V = 0.500R - 0.419G - 0.081B + 128
+
+    MUInt8 *yPtr = nv12Data;
+    MUInt8 *uvPtr = nv12Data + ySize;
+
+    for (int y = 0; y < alignedHeight; y++) {
+        for (int x = 0; x < alignedWidth; x++) {
+            int bgraIdx = (y * alignedWidth + x) * 4;
+            uint8_t b = bgraData[bgraIdx];
+            uint8_t g = bgraData[bgraIdx + 1];
+            uint8_t r = bgraData[bgraIdx + 2];
+
+            // Y
+            int Y = (int)(0.299 * r + 0.587 * g + 0.114 * b);
+            yPtr[y * alignedWidth + x] = (uint8_t)(Y < 0 ? 0 : (Y > 255 ? 255 : Y));
+
+            // UV (每 2x2 像素采样一次)
+            if (y % 2 == 0 && x % 2 == 0) {
+                int U = (int)(-0.169 * r - 0.331 * g + 0.500 * b + 128);
+                int V = (int)(0.500 * r - 0.419 * g - 0.081 * b + 128);
+
+                // NV12: UVUV...
+                int uvIdx = (y / 2) * alignedWidth + x;
+                uvPtr[uvIdx] = (uint8_t)(U < 0 ? 0 : (U > 255 ? 255 : U));
+                uvPtr[uvIdx + 1] = (uint8_t)(V < 0 ? 0 : (V > 255 ? 255 : V));
+            }
+        }
+    }
+
+    free(bgraData); // 释放 BGRA 临时内存
+
+    ASVLOFFSCREEN offscreen = {0};
+    offscreen.u32PixelArrayFormat = ASVL_PAF_NV12; // NV12
+    offscreen.i32Width = (int)alignedWidth;
+    offscreen.i32Height = (int)alignedHeight;
+    offscreen.ppu8Plane[0] = nv12Data;
+    offscreen.ppu8Plane[1] = nv12Data + ySize;
+    offscreen.pi32Pitch[0] = (int)alignedWidth;
+    offscreen.pi32Pitch[1] = (int)alignedWidth;
 
     return offscreen;
 }
@@ -284,7 +327,7 @@
 - (NSArray<NSDictionary *> *)detectFaces:(ASVLOFFSCREEN *)offscreen {
   @synchronized (self) {
       if (!self.inited || offscreen == NULL) {
-          NSLog(@"[ArcsoftEngineManager] detectFaces: engine not inited or offscreen is NULL");
+          // NSLog(@"[ArcsoftEngineManager] detectFaces: engine not inited or offscreen is NULL");
           return @[];
       }
 
@@ -296,14 +339,14 @@
                                                  faceRes:&faces];
 
       if (result != MOK) {
-          NSLog(@"[ArcsoftEngineManager] detectFaces failed with code: %ld", (long)result);
+          // NSLog(@"[ArcsoftEngineManager] detectFaces failed with code: %ld", (long)result);
           return @[];
       }
 
       if (faces.faceNum == 0) {
-          NSLog(@"[ArcsoftEngineManager] detectFaces: No faces detected");
+          // NSLog(@"[ArcsoftEngineManager] detectFaces: No faces detected");
       } else {
-          NSLog(@"[ArcsoftEngineManager] detectFaces: Detected %d faces", faces.faceNum);
+          // NSLog(@"[ArcsoftEngineManager] detectFaces: Detected %d faces", faces.faceNum);
       }
 
       [self processFaces:offscreen faces:&faces];
@@ -313,6 +356,7 @@
         MRECT r = faces.faceRect[i];
 
         // 提取 faceDataInfo 并序列化
+        // 这是 extractFeature 所必需的
         ASF_FaceDataInfo dataInfo = faces.faceDataInfoList[i];
         NSData *faceData = [NSData dataWithBytes:dataInfo.data length:dataInfo.dataSize];
 
@@ -331,17 +375,17 @@
  */
 - (NSArray<NSDictionary *> *)detectFacesFromImage:(UIImage *)image {
     if (!self.inited || !image) {
-        NSLog(@"[ArcsoftEngineManager] detectFacesFromImage: invalid input. inited=%d, image=%@", self.inited, image);
+        // NSLog(@"[ArcsoftEngineManager] detectFacesFromImage: invalid input. inited=%d, image=%@", self.inited, image);
         return @[];
     }
 
-    NSLog(@"[ArcsoftEngineManager] detectFacesFromImage: image size={%f, %f}, scale=%f", image.size.width, image.size.height, image.scale);
+    // NSLog(@"[ArcsoftEngineManager] detectFacesFromImage: image size={%f, %f}, scale=%f", image.size.width, image.size.height, image.scale);
 
     ASVLOFFSCREEN offscreen = [self offscreenFromImage:image];
-    NSLog(@"[ArcsoftEngineManager] detectFacesFromImage: offscreen created. width=%d, height=%d, format=0x%x", offscreen.i32Width, offscreen.i32Height, offscreen.u32PixelArrayFormat);
+    // NSLog(@"[ArcsoftEngineManager] detectFacesFromImage: offscreen created. width=%d, height=%d, format=0x%x", offscreen.i32Width, offscreen.i32Height, offscreen.u32PixelArrayFormat);
 
     NSArray<NSDictionary *> *faces = [self detectFaces:&offscreen];
-    NSLog(@"[ArcsoftEngineManager] detectFacesFromImage: detected %lu faces", (unsigned long)faces.count);
+    // NSLog(@"[ArcsoftEngineManager] detectFacesFromImage: detected %lu faces", (unsigned long)faces.count);
 
     [self freeOffscreen:&offscreen];
     return faces;
@@ -368,7 +412,7 @@
       info.faceRect = alignedRect;
       info.faceOrient = orient;
 
-      // 填充 faceDataInfo
+      // 填充 faceDataInfo (必须)
       if (faceDataInfo) {
           info.faceDataInfo.data = (MByte *)faceDataInfo.bytes;
           info.faceDataInfo.dataSize = (MInt32)faceDataInfo.length;
