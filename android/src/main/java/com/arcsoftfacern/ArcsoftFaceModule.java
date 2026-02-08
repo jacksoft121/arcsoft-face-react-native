@@ -28,6 +28,7 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * ArcSoft Face SDK React Native 模块
@@ -647,6 +648,31 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     } catch (Throwable t) {
       Log.e(TAG, "getFaceCount failed", t);
       promise.reject("getFaceCount_failed", t);
+    }
+  }
+
+  /**
+   * 获取所有人脸列表
+   */
+  @ReactMethod
+  public void getAllFaces(Promise promise) {
+    long t0 = System.currentTimeMillis();
+    Log.d(TAG, "getAllFaces()");
+    try {
+      List<Map<String, String>> faces = engineManager.faceDBGetAllFaces();
+      WritableArray out = Arguments.createArray();
+      for (Map<String, String> face : faces) {
+        WritableMap map = Arguments.createMap();
+        map.putString("id", face.get("id"));
+        map.putString("userId", face.get("userId"));
+        map.putString("registerTime", face.get("registerTime"));
+        out.pushMap(map);
+      }
+      Log.d(TAG, "getAllFaces => count=" + faces.size() + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+      promise.resolve(out);
+    } catch (Throwable t) {
+      Log.e(TAG, "getAllFaces failed", t);
+      promise.reject("getAllFaces_failed", t);
     }
   }
 

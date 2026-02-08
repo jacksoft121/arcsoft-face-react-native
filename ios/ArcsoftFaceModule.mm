@@ -680,4 +680,21 @@ RCT_EXPORT_METHOD(getFaceCount:(RCTPromiseResolveBlock)resolve
   resolve(@(count));
 }
 
+/**
+ * 获取所有人脸列表
+ */
+RCT_EXPORT_METHOD(getAllFaces:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
+{
+  long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
+  asf_logD(@"getAllFaces()");
+
+  NSArray<NSDictionary *> *faces = [self.engineManager faceDBGetAllFaces];
+
+  long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
+  asf_logD(@"getAllFaces => count=%lu, cost=%lldms", (unsigned long)faces.count, cost);
+
+  resolve(faces);
+}
+
 @end

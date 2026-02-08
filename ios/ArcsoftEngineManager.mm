@@ -597,6 +597,26 @@
 }
 
 /**
+ * 获取所有人脸列表
+ */
+- (NSArray<NSDictionary *> *)faceDBGetAllFaces {
+    // 从 FaceDB 获取所有记录
+    NSArray<FaceRecord *> *records = [[FaceDB sharedInstance] getAllFaces];
+    NSMutableArray *result = [NSMutableArray arrayWithCapacity:records.count];
+
+    for (FaceRecord *record in records) {
+        if (record.userId) {
+            [result addObject:@{
+                @"id": [NSString stringWithFormat:@"%ld", (long)record.id],
+                @"userId": record.userId,
+                @"registerTime": @(record.registerTime)
+            }];
+        }
+    }
+    return result;
+}
+
+/**
  * 搜索人脸 (1:N)
  */
 - (NSDictionary * _Nullable)faceDBSearchTop1:(NSData *)featureData threshold:(float)threshold {

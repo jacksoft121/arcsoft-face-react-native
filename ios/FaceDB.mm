@@ -39,18 +39,45 @@
 
 - (void)createTable {
     char *errMsg;
-    const char *sql = "CREATE TABLE IF NOT EXISTS faces (user_id TEXT PRIMARY KEY, feature BLOB)";
+    // Updated schema to match Android: id (INTEGER PRIMARY KEY AUTOINCREMENT), user_id (TEXT), feature_data (BLOB), register_time (INTEGER)
+    // Note: Android uses "face" table name, we can keep "faces" or change it. Keeping "faces" for now but updating columns.
+    // To support migration, we should check if columns exist, but for simplicity in this demo, we assume fresh install or compatible schema.
+    // If you need migration, you'd need to check schema version.
+
+    // Dropping table for schema update (DEV ONLY - REMOVE FOR PRODUCTION MIGRATION)
+    // sqlite3_exec(_db, "DROP TABLE IF EXISTS faces", NULL, NULL, NULL);
+
+    const char *sql = "CREATE TABLE IF NOT EXISTS faces ("
+                      "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                      "user_id TEXT, "
+                      "feature_data BLOB, "
+                      "register_time INTEGER)";
+
     if (sqlite3_exec(_db, sql, NULL, NULL, &errMsg) != SQLITE_OK) {
         NSLog(@"[FaceDB] Failed to create table: %s", errMsg);
     }
+
+    // Create index on user_id for faster lookups (optional but good practice)
+    const char *idxSql = "CREATE INDEX IF NOT EXISTS idx_user_id ON faces (user_id)";
+    sqlite3_exec(_db, idxSql, NULL, NULL, NULL);
 }
 
 - (BOOL)addFace:(NSString *)userId feature:(NSData *)feature {
-    const char *sql = "INSERT OR REPLACE INTO faces (user_id, feature) VALUES (?, ?)";
+    // Check if user exists to update or insert
+    // Android Room @Insert(onConflict = OnConflictStrategy.REPLACE) might replace based on PrimaryKey (id).
+    // But here we want to update based on userId.
+    // Let's first delete existing user to simulate "replace" behavior for userId, then insert new.
+
+    [self removeFace:userId];
+
+    const char *sql = "INSERT INTO faces (user_id, feature_data, register_time) VALUES (?, ?, ?)";
     sqlite3_stmt *stmt;
     if (sqlite3_prepare_v2(_db, sql, -1, &stmt, NULL) == SQLITE_OK) {
         sqlite3_bind_text(stmt, 1, [userId UTF8String], -1, SQLITE_TRANSIENT);
         sqlite3_bind_blob(stmt, 2, [feature bytes], (int)[feature length], SQLITE_TRANSIENT);
+
+        long long time = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+        sqlite3_bind_int64(stmt, 3, time);
 
         if (sqlite3_step(stmt) != SQLITE_DONE) {
             NSLog(@"[FaceDB] Failed to insert face");
@@ -92,21 +119,26 @@
 
 - (NSArray<FaceRecord *> *)getAllFaces {
     NSMutableArray *faces = [NSMutableArray array];
-    const char *sql = "SELECT user_id, feature FROM faces";
+    const char *sql = "SELECT id, user_id, feature_data, register_time FROM faces";
     sqlite3_stmt *stmt;
     if (sqlite3_prepare_v2(_db, sql, -1, &stmt, NULL) == SQLITE_OK) {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
             FaceRecord *record = [[FaceRecord alloc] init];
-            char *userIdChars = (char *)sqlite3_column_text(stmt, 0);
+
+            record.id = sqlite3_column_int(stmt, 0);
+
+            char *userIdChars = (char *)sqlite3_column_text(stmt, 1);
             if (userIdChars) {
                 record.userId = [NSString stringWithUTF8String:userIdChars];
             }
 
-            const void *featureBytes = sqlite3_column_blob(stmt, 1);
-            int featureLen = sqlite3_column_bytes(stmt, 1);
+            const void *featureBytes = sqlite3_column_blob(stmt, 2);
+            int featureLen = sqlite3_column_bytes(stmt, 2);
             if (featureBytes && featureLen > 0) {
                 record.featureData = [NSData dataWithBytes:featureBytes length:featureLen];
             }
+
+            record.registerTime = sqlite3_column_int64(stmt, 3);
 
             [faces addObject:record];
         }

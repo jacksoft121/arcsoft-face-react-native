@@ -107,6 +107,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// @return 数量
 - (NSInteger)faceDBCount;
 
+/// 获取所有人脸列表
+/// @return 包含 { "id": userId } 的数组
+- (NSArray<NSDictionary *> *)faceDBGetAllFaces;
+
 /// 逐个比对（本地 map），返回 topK（按 score 降序）
 /// @param featureData 待搜索的特征数据
 /// @param threshold 相似度阈值

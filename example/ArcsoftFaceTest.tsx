@@ -12,6 +12,8 @@ import {
     useWindowDimensions,
     Image,
     Modal,
+    Switch,
+    FlatList,
 } from 'react-native';
 import {
     Camera,
@@ -47,6 +49,8 @@ import {
     removeFaceFeature,
     registerFaceFeature,
     searchFaceFeature,
+    registerFaceFromUrl,
+    getAllFaces,
     type FaceInfo,
     type FaceFeature,
     type ActiveFileInfo,
@@ -70,6 +74,12 @@ type FaceBoxUI = {
     name?: string;
 };
 
+type FaceRecord = {
+    id: string;
+    userId: string;
+    registerTime: number;
+};
+
 export default function TestScreen() {
     const {hasPermission, requestPermission} = useCameraPermission();
     const [cameraPosition, setCameraPosition] = useState<CameraPosition>('front');
@@ -87,12 +97,18 @@ export default function TestScreen() {
 
     const [imageBase64, setImageBase64] = useState('');
     const [userId, setUserId] = useState('u_001');
+    const [imageUrl, setImageUrl] = useState('https://raw.githubusercontent.com/jackxu/arcsoft-face-react-native/main/example/assets/face_test.jpg');
     const [dbCount, setDbCount] = useState(0);
     const [lastFaceCount, setLastFaceCount] = useState(0);
     const [log, setLog] = useState<string>('');
     const [boxes, setBoxes] = useState<FaceBoxUI[]>([]);
     const [isCapturing, setIsCapturing] = useState(false);
     const [savedImagePath, setSavedImagePath] = useState<string | null>(null);
+
+    // New states
+    const [targetFps, setTargetFps] = useState(3);
+    const [isDetecting, setIsDetecting] = useState(true);
+    const [faceList, setFaceList] = useState<FaceRecord[]>([]);
 
     // Log UI state
     const [isLogMinimized, setIsLogMinimized] = useState(false);
@@ -177,6 +193,14 @@ export default function TestScreen() {
             const c = await getFaceCount();
             setDbCount(c);
             appendLog(`getFaceCount => ${c}`);
+            
+            try {
+                // @ts-ignore
+                const faces = await getAllFaces();
+                setFaceList(faces as FaceRecord[]);
+            } catch (e) {
+                // ignore if not implemented
+            }
         } catch (e: any) {
             appendLog(`getFaceCount error: ${String(e?.message || e)}`);
         }
@@ -192,15 +216,15 @@ export default function TestScreen() {
         }
     }, [appendLog, refreshDBCount]);
 
-    const doRemoveFace = useCallback(async () => {
+    const doRemoveFace = useCallback(async (id: string) => {
         try {
-            const ok = await removeFaceFeature(userId);
-            appendLog(`removeFaceFeature(${userId}) => ${ok}`);
+            const ok = await removeFaceFeature(id);
+            appendLog(`removeFaceFeature(${id}) => ${ok}`);
             refreshDBCount();
         } catch (e: any) {
             appendLog(`removeFaceFeature error: ${String(e?.message || e)}`);
         }
-    }, [appendLog, refreshDBCount, userId]);
+    }, [appendLog, refreshDBCount]);
 
     const reportFacesToJS = useMemo(() => {
         return Worklets.createRunOnJS((payload: {
@@ -213,17 +237,18 @@ export default function TestScreen() {
         }) => {
             const {faces, frameW, frameH, imagePath,isFrontCamera,rotDegress } = payload;
 
-            appendLog(`reportFacesToJS => frameW:${frameW}, frameH:${frameH},rotDegress:${rotDegress}, isFrontCamera:${isFrontCamera}`);
+            // appendLog(`reportFacesToJS => frameW:${frameW}, frameH:${frameH},rotDegress:${rotDegress}, isFrontCamera:${isFrontCamera}`);
 
             // Only log if faces found or capturing to avoid spam
             if (faces.length > 0 || imagePath) {
-                appendLog(`reportFacesToJS => faces:${JSON.stringify(faces[0])}`);
-
+                // appendLog(`reportFacesToJS => faces:${JSON.stringify(faces[0])}`);
             }
 
             setLastFaceCount(faces.length);
             if (imagePath) {
                 setSavedImagePath(imagePath);
+                // 自动填充到图片 URL 输入框
+                setImageUrl(imagePath);
                 setIsCapturing(false);
                 appendLog(`Captured image: ${imagePath}`);
             }
@@ -268,14 +293,39 @@ export default function TestScreen() {
         (frame: Frame) => {
             'worklet';
             if (!inited) return;
+            
+            // 如果正在截图，不执行 runAtTargetFps 限制，直接执行以尽快捕获
+            if (isCapturing) {
+                try {
+                    const rotDegress = getFrameRotationDegrees(frame);
+                    if (plugin != null) {
+                        // @ts-ignore
+                        const result = plugin.call(frame, {saveImage: true, extractFeature: true, score: 0.7}) as DetectFacesResult;
+                        reportFacesToJS({
+                            faces: result.faces,
+                            frameW: frame.width,
+                            frameH: frame.height,
+                            imagePath: result.imagePath,
+                            isFrontCamera: cameraPosition === 'front',
+                            rotDegress: rotDegress,
+                        });
+                    }
+                } catch (e: any) {
+                    console.error('Frame processor error (capture):', e.message);
+                }
+                return;
+            }
 
-            runAtTargetFps(15, () => {
+            // 如果未开启检测，直接返回
+            if (!isDetecting) return;
+
+            runAtTargetFps(targetFps, () => {
                 'worklet';
                 try {
                     const rotDegress = getFrameRotationDegrees(frame);
                     if (plugin != null) {
                         // @ts-ignore
-                        const result = plugin.call(frame, {saveImage: isCapturing, extractFeature: true, score: 0.7}) as DetectFacesResult;
+                        const result = plugin.call(frame, {saveImage: false, extractFeature: true, score: 0.7}) as DetectFacesResult;
                         reportFacesToJS({
                             faces: result.faces,
                             frameW: frame.width,
@@ -290,7 +340,7 @@ export default function TestScreen() {
                 }
             });
         },
-        [inited, reportFacesToJS, isCapturing, cameraPosition],
+        [inited, reportFacesToJS, isCapturing, cameraPosition, targetFps, isDetecting],
     );
 
     const canUseCamera = useMemo(() => {
@@ -319,6 +369,27 @@ export default function TestScreen() {
             Alert.alert('异常', String(e?.message || e));
         }
     }, [userId, appendLog, refreshDBCount]);
+
+    const doRegisterFromUrl = useCallback(async () => {
+        if (!imageUrl) {
+            Alert.alert('提示', '请输入图片地址');
+            return;
+        }
+        try {
+            appendLog(`开始注册图片: ${imageUrl}`);
+            const result = await registerFaceFromUrl(userId, imageUrl);
+            appendLog(`registerFaceFromUrl => ${JSON.stringify(result)}`);
+            refreshDBCount();
+            if (result.success) {
+                Alert.alert('成功', `注册成功: ${result.userId}`);
+            } else {
+                Alert.alert('失败', result.msg);
+            }
+        } catch (e: any) {
+            appendLog(`doRegisterFromUrl error: ${String(e?.message || e)}`);
+            Alert.alert('异常', String(e?.message || e));
+        }
+    }, [userId, imageUrl, appendLog, refreshDBCount]);
 
     const doSearchDB = useCallback(async () => {
         if (!lastFaceRef.current) {
@@ -378,6 +449,23 @@ export default function TestScreen() {
     const toggleCamera = useCallback(() => {
         setCameraPosition(p => (p === 'front' ? 'back' : 'front'));
     }, []);
+
+    const renderFaceItem = ({item}: {item: FaceRecord}) => (
+        <View style={styles.faceItem}>
+            <View>
+                <Text style={styles.faceId}>ID: {item.id} | User: {item.userId}</Text>
+                <Text style={styles.faceTime}>
+                    {new Date(item.registerTime).toLocaleString()}
+                </Text>
+            </View>
+            <TouchableOpacity 
+                style={styles.deleteBtn} 
+                onPress={() => doRemoveFace(item.userId)}
+            >
+                <Text style={styles.deleteBtnText}>删除</Text>
+            </TouchableOpacity>
+        </View>
+    );
 
     return (
         <SafeAreaView style={styles.root}>
@@ -441,6 +529,19 @@ export default function TestScreen() {
 
                     <View style={styles.card}>
                         <Text style={styles.h2}>3) Camera / Detect</Text>
+                        <View style={styles.row}>
+                            <Text style={styles.label}>FPS</Text>
+                            <TextInput
+                                value={String(targetFps)}
+                                onChangeText={(t) => setTargetFps(Number(t) || 1)}
+                                keyboardType="numeric"
+                                style={[styles.input, {maxWidth: 60}]}
+                            />
+                            <View style={{width: 20}} />
+                            <Text style={styles.label}>开启检测</Text>
+                            <Switch value={isDetecting} onValueChange={setIsDetecting} />
+                        </View>
+
                         {canUseCamera ? (
                             <View
                                 style={styles.previewWrap}
@@ -455,7 +556,7 @@ export default function TestScreen() {
                                     isActive={inited}
                                     pixelFormat="yuv"
                                     frameProcessor={frameProcessor}
-                                    frameProcessorFps={15}
+                                    frameProcessorFps={targetFps} // Use dynamic FPS if supported, or rely on runAtTargetFps
                                 />
                                 <Canvas style={StyleSheet.absoluteFill} pointerEvents="none">
                                     {boxes.map((box, i) => (
@@ -505,21 +606,7 @@ export default function TestScreen() {
                         )}
                     </View>
 
-                    <View style={styles.card}>
-                        <Text style={styles.h2}>4) 图片处理 (Base64)</Text>
-                        <TextInput
-                            value={imageBase64}
-                            onChangeText={setImageBase64}
-                            placeholder="输入 Base64..."
-                            style={[styles.input, {height: 40}]}
-                            multiline
-                        />
-                        <View style={styles.btnRow}>
-                            <TouchableOpacity style={styles.btn} onPress={doProcessImage}>
-                                <Text style={styles.btnText}>处理图片</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
+                    {/* Removed "4) 图片处理 (Base64)" section as requested */}
 
                     <View style={styles.card}>
                         <Text style={styles.h2}>5) 人脸库</Text>
@@ -527,17 +614,31 @@ export default function TestScreen() {
                             <Text style={styles.label}>userId</Text>
                             <TextInput value={userId} onChangeText={setUserId} style={styles.input}/>
                         </View>
+                        <View style={styles.row}>
+                            <Text style={styles.label}>图片URL</Text>
+                            <TextInput
+                                value={imageUrl}
+                                onChangeText={setImageUrl}
+                                placeholder="http://... or file://..."
+                                style={styles.input}
+                                autoCapitalize="none"
+                                multiline
+                            />
+                        </View>
 
                         <Text style={styles.kv}>DB 数量：{dbCount}</Text>
                         <View style={styles.btnRow}>
                             <TouchableOpacity style={styles.btn} onPress={doRegisterToDB}>
-                                <Text style={styles.btnText}>注册</Text>
+                                <Text style={styles.btnText}>注册(当前帧)</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.btn} onPress={doRegisterFromUrl}>
+                                <Text style={styles.btnText}>注册(URL)</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.btn} onPress={doSearchDB}>
                                 <Text style={styles.btnText}>检索</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity style={styles.btnOutline} onPress={doRemoveFace}>
-                                <Text style={styles.btnOutlineText}>删除</Text>
+                            <TouchableOpacity style={styles.btnOutline} onPress={() => doRemoveFace(userId)}>
+                                <Text style={styles.btnOutlineText}>删除(Input)</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.btnOutline} onPress={doClearDB}>
                                 <Text style={styles.btnOutlineText}>清空</Text>
@@ -546,6 +647,20 @@ export default function TestScreen() {
                                 <Text style={styles.btnOutlineText}>刷新</Text>
                             </TouchableOpacity>
                         </View>
+
+                        {/* Face List */}
+                        <Text style={[styles.h2, {marginTop: 16}]}>已注册人脸列表</Text>
+                        {faceList.length === 0 ? (
+                            <Text style={styles.note}>暂无数据 (或原生未实现 getAllFaces)</Text>
+                        ) : (
+                            <FlatList
+                                data={faceList}
+                                keyExtractor={(item) => item.id}
+                                renderItem={renderFaceItem}
+                                style={{maxHeight: 200, marginTop: 8}}
+                                nestedScrollEnabled
+                            />
+                        )}
                     </View>
 
                     {/* Spacer for log window */}
@@ -634,6 +749,35 @@ const styles = StyleSheet.create({
         height: 300, // Fixed height for preview
     },
     preview: {width: '100%', height: '100%'},
+
+    // Face List Styles
+    faceItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 8,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: '#eee',
+    },
+    faceId: {
+        fontSize: 14,
+        color: '#333',
+    },
+    faceTime: {
+        fontSize: 12,
+        color: '#999',
+        marginTop: 2,
+    },
+    deleteBtn: {
+        backgroundColor: '#ff3b30',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 4,
+    },
+    deleteBtnText: {
+        color: '#fff',
+        fontSize: 12,
+    },
 
     // Log Window Styles
     logContainer: {

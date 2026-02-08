@@ -495,6 +495,8 @@ public class ArcsoftEngineManager {
 
     // 1. Save to DB
     FaceEntity entity = new FaceEntity(tag, bytes);
+    // 更新注册时间
+    entity.registerTime = System.currentTimeMillis();
     faceDatabase.faceDao().insertFace(entity);
 
     // 2. Update Engine
@@ -571,6 +573,23 @@ public class ArcsoftEngineManager {
     int c = faceDatabase.faceDao().getCount();
     d("faceDBCount => " + c);
     return c;
+  }
+
+  /**
+   * 获取所有人脸列表
+   * @return 包含 { "id": userId } 的列表
+   */
+  public synchronized List<Map<String, String>> faceDBGetAllFaces() {
+      List<FaceEntity> faces = faceDatabase.faceDao().getAllFaces();
+      List<Map<String, String>> result = new ArrayList<>();
+      for (FaceEntity face : faces) {
+          Map<String, String> map = new java.util.HashMap<>();
+          map.put("id", String.valueOf(face.id)); // DB ID
+          map.put("userId", face.userId); // User ID
+          map.put("registerTime", String.valueOf(face.registerTime));
+          result.add(map);
+      }
+      return result;
   }
 
   /**
