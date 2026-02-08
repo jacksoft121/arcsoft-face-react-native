@@ -108,8 +108,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSInteger)faceDBCount;
 
 /// 获取所有人脸列表
+/// @param userId 可选的用户ID，如果提供则只返回该用户的数据
 /// @return 包含 { "id": userId } 的数组
-- (NSArray<NSDictionary *> *)faceDBGetAllFaces;
+- (NSArray<NSDictionary *> *)faceDBGetAllFaces:(nullable NSString *)userId;
 
 /// 逐个比对（本地 map），返回 topK（按 score 降序）
 /// @param featureData 待搜索的特征数据
