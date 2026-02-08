@@ -5,14 +5,20 @@
 #import "PixelBufferUtils.h"
 
 @interface ArcsoftFaceProcessorPlugin : FrameProcessorPlugin
+// 优化策略：记录已处理的 faceId 和重试次数
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSString *> *processedFaceIds; // faceId -> userId
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *faceRetryCounts; // faceId -> retry count
 @end
 
 @implementation ArcsoftFaceProcessorPlugin
 
+static int DEFAULT_MAX_RETRY_COUNT = 5;
+
 - (instancetype)initWithProxy:(VisionCameraProxyHolder*)proxy
                   withOptions:(NSDictionary* _Nullable)options {
   if (self = [super initWithProxy:proxy withOptions:options]) {
-    // init
+    _processedFaceIds = [NSMutableDictionary dictionary];
+    _faceRetryCounts = [NSMutableDictionary dictionary];
   }
   return self;
 }
@@ -40,11 +46,13 @@
   BOOL saveImage = NO;
   BOOL extractFeature = NO;
   double scoreThreshold = 0.8; // 默认相似度阈值
+  int maxRetryCount = DEFAULT_MAX_RETRY_COUNT;
 
   if (arguments) {
       if (arguments[@"saveImage"]) saveImage = [arguments[@"saveImage"] boolValue];
       if (arguments[@"extractFeature"]) extractFeature = [arguments[@"extractFeature"] boolValue];
       if (arguments[@"score"]) scoreThreshold = [arguments[@"score"] doubleValue];
+      if (arguments[@"maxRetryCount"]) maxRetryCount = [arguments[@"maxRetryCount"] intValue];
   }
 
   // 2. 保存图片 (调试用)
@@ -63,47 +71,84 @@
       // 3.1 人脸检测
       NSArray<NSDictionary *> *faces = [[ArcsoftEngineManager sharedInstance] detectFaces:offscreen];
 
+      // 清理离开画面的人脸状态
+      [self cleanUpFaceStates:faces];
+
       enrichedFaces = [NSMutableArray arrayWithCapacity:faces.count];
       for (NSDictionary *face in faces) {
           NSMutableDictionary *faceMutable = [face mutableCopy];
 
           // 3.2 特征提取 (如果开启)
           if (extractFeature) {
-              NSDictionary *rectDict = face[@"rect"];
-              MRECT rect = {
-                  [rectDict[@"left"] intValue], [rectDict[@"top"] intValue],
-                  [rectDict[@"right"] intValue], [rectDict[@"bottom"] intValue]
-              };
-              int orient = [face[@"orient"] intValue];
+              // 尝试获取 faceID
+              NSNumber *faceIdNum = faceMutable[@"faceId"]; // 注意：detectFaces 需要返回 faceId
 
-              // 获取 faceDataInfo (从 detectFaces 结果中获取)
-              NSData *faceDataInfo = face[@"faceDataInfo"];
+              BOOL needRecognition = YES;
 
-              // 提取特征 (Base64)
-              // 注意：这里传入的 offscreen 必须是 copy 过的，因为 ArcSoft SDK 在 extractFeature 时
-              // 可能会修改或依赖 offscreen 的内存布局。
-              // 官方 Demo 中，detectFaces 和 extractFeature 使用的是同一份 cameraData。
-              // 但在多线程环境下，官方 Demo 复制了一份 cameraData 给 FR 线程 (copyCameraDataForProcessFR)。
-              // 我们这里是在同一个 Block (同一个线程) 中顺序执行，理论上可以直接使用 offscreen。
-              // 但是，PixelBufferUtils 提供的 offscreen 是临时的，且去除了 padding。
-              // 只要 detectFaces 和 extractFeature 都接受这种紧凑格式即可。
-
-              NSString *featBase64 = [[ArcsoftEngineManager sharedInstance] extractFeature:offscreen faceRect:rect orient:orient faceDataInfo:faceDataInfo];
-
-              if (featBase64) {
-                  faceMutable[@"featureBase64"] = featBase64;
-
-                  // 3.3 自动搜索人脸库 (1:N)
-                  NSData *featureData = [[NSData alloc] initWithBase64EncodedString:featBase64 options:0];
-                  NSDictionary *searchResult = [[ArcsoftEngineManager sharedInstance] faceDBSearchTop1:featureData threshold:scoreThreshold];
-
-                  if (searchResult) {
-                      faceMutable[@"userId"] = searchResult[@"id"];
-                      faceMutable[@"score"] = searchResult[@"score"];
+              if (faceIdNum) {
+                  // 检查是否已识别
+                  NSString *cachedUserId = self.processedFaceIds[faceIdNum];
+                  if (cachedUserId) {
+                      // 已识别，直接使用缓存
+                      faceMutable[@"userId"] = cachedUserId;
+                      faceMutable[@"score"] = @(1.0); // 或者缓存之前的分数
+                      needRecognition = NO;
+                  } else {
+                      // 检查重试次数
+                      NSNumber *retryCountNum = self.faceRetryCounts[faceIdNum];
+                      int retryCount = retryCountNum ? [retryCountNum intValue] : 0;
+                      if (retryCount >= maxRetryCount) {
+                          // 超过重试次数，不再尝试
+                          needRecognition = NO;
+                      }
                   }
-              } else {
-                  // 特征提取失败 (可能是人脸质量不高或角度问题)
-                  // NSLog(@"[ArcsoftFace] Feature extraction failed");
+              }
+
+              if (needRecognition) {
+                  NSDictionary *rectDict = face[@"rect"];
+                  MRECT rect = {
+                      [rectDict[@"left"] intValue], [rectDict[@"top"] intValue],
+                      [rectDict[@"right"] intValue], [rectDict[@"bottom"] intValue]
+                  };
+                  int orient = [face[@"orient"] intValue];
+
+                  // 获取 faceDataInfo (从 detectFaces 结果中获取)
+                  NSData *faceDataInfo = face[@"faceDataInfo"];
+
+                  // 提取特征 (Base64)
+                  NSString *featBase64 = [[ArcsoftEngineManager sharedInstance] extractFeature:offscreen faceRect:rect orient:orient faceDataInfo:faceDataInfo];
+
+                  if (featBase64) {
+                      faceMutable[@"featureBase64"] = featBase64;
+
+                      // 3.3 自动搜索人脸库 (1:N)
+                      NSData *featureData = [[NSData alloc] initWithBase64EncodedString:featBase64 options:0];
+                      NSDictionary *searchResult = [[ArcsoftEngineManager sharedInstance] faceDBSearchTop1:featureData threshold:scoreThreshold];
+
+                      if (searchResult) {
+                          NSString *userId = searchResult[@"id"];
+                          faceMutable[@"userId"] = userId;
+                          faceMutable[@"score"] = searchResult[@"score"];
+
+                          // 识别成功，缓存状态
+                          if (faceIdNum) {
+                              self.processedFaceIds[faceIdNum] = userId;
+                              [self.faceRetryCounts removeObjectForKey:faceIdNum];
+                          }
+                      } else {
+                          // 识别失败，增加重试计数
+                          if (faceIdNum) {
+                              int count = [self.faceRetryCounts[faceIdNum] intValue];
+                              self.faceRetryCounts[faceIdNum] = @(count + 1);
+                          }
+                      }
+                  } else {
+                      // 特征提取失败
+                      if (faceIdNum) {
+                          int count = [self.faceRetryCounts[faceIdNum] intValue];
+                          self.faceRetryCounts[faceIdNum] = @(count + 1);
+                      }
+                  }
               }
           }
 
@@ -126,6 +171,35 @@
   }
 
   return result;
+}
+
+// 清理不再画面中的人脸状态
+- (void)cleanUpFaceStates:(NSArray<NSDictionary *> *)currentFaces {
+    NSMutableSet<NSNumber *> *currentIds = [NSMutableSet set];
+    for (NSDictionary *face in currentFaces) {
+        NSNumber *fid = face[@"faceId"];
+        if (fid) {
+            [currentIds addObject:fid];
+        }
+    }
+
+    // 移除 processedFaceIds 中不存在于 currentIds 的键
+    NSMutableArray *toRemoveProcessed = [NSMutableArray array];
+    for (NSNumber *fid in self.processedFaceIds) {
+        if (![currentIds containsObject:fid]) {
+            [toRemoveProcessed addObject:fid];
+        }
+    }
+    [self.processedFaceIds removeObjectsForKeys:toRemoveProcessed];
+
+    // 移除 faceRetryCounts 中不存在于 currentIds 的键
+    NSMutableArray *toRemoveRetry = [NSMutableArray array];
+    for (NSNumber *fid in self.faceRetryCounts) {
+        if (![currentIds containsObject:fid]) {
+            [toRemoveRetry addObject:fid];
+        }
+    }
+    [self.faceRetryCounts removeObjectsForKeys:toRemoveRetry];
 }
 
 /**

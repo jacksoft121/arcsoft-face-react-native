@@ -302,7 +302,14 @@ export default function TestScreen() {
                     const rotDegress = getFrameRotationDegrees(frame);
                     if (plugin != null) {
                         // @ts-ignore
-                        const result = plugin.call(frame, {saveImage: true, extractFeature: true, score: 0.7}) as DetectFacesResult;
+                        //const result = plugin.call(frame, {saveImage: true, extractFeature: true, score: 0.7}) as DetectFacesResult;
+                        const result = plugin.call(frame, {
+                            saveImage: true, // 保存图片
+                            extractFeature: true, // 提取特征
+                            score: 0.7, // 自定义置信度阈值
+                            maxRetryCount: 3 // 自定义重试次数,这在视频video下生效，提升性能；
+                        }) as DetectFacesResult;
+
                         reportFacesToJS({
                             faces: result.faces,
                             frameW: frame.width,

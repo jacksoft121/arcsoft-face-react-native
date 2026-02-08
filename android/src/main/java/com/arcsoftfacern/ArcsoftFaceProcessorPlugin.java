@@ -22,10 +22,16 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
   private static final String TAG = "ArcsoftFacePlugin";
   private final ArcsoftEngineManager engineManager;
+
+  // 优化策略：记录已处理的 faceId 和重试次数
+  private final Map<Integer, String> processedFaceIds = new ConcurrentHashMap<>(); // faceId -> userId (if recognized)
+  private final Map<Integer, Integer> faceRetryCounts = new ConcurrentHashMap<>(); // faceId -> retry count
+  private static final int DEFAULT_MAX_RETRY_COUNT = 5;
 
   public ArcsoftFaceProcessorPlugin(@NonNull VisionCameraProxy proxy, @Nullable Map<String, Object> options) {
     super();
@@ -45,6 +51,7 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
       boolean saveImage = false;
       boolean extractFeature = false;
       double scoreThreshold = 0.8; // 默认阈值
+      int maxRetryCount = DEFAULT_MAX_RETRY_COUNT;
       
       if (arguments != null) {
         if (arguments.containsKey("saveImage")) {
@@ -61,6 +68,11 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
             Object val = arguments.get("score");
             if (val instanceof Number) scoreThreshold = ((Number) val).doubleValue();
             else if (val instanceof String) scoreThreshold = Double.parseDouble((String) val);
+        }
+        if (arguments.containsKey("maxRetryCount")) {
+            Object val = arguments.get("maxRetryCount");
+            if (val instanceof Number) maxRetryCount = ((Number) val).intValue();
+            else if (val instanceof String) maxRetryCount = Integer.parseInt((String) val);
         }
       }
 
@@ -82,6 +94,9 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
       int height = image.getHeight();
       List<FaceInfo> faces = engineManager.detectFacesNV21(nv21, width, height);
 
+      // 清理离开画面的人脸状态
+      cleanUpFaceStates(faces);
+
       // 5. 结果封装 & 特征提取
       List<Map<String, Object>> faceList = new ArrayList<>();
       for (FaceInfo face : faces) {
@@ -97,25 +112,57 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
         map.put("orient", (double) face.getOrient());
         map.put("faceId", (double) face.getFaceId());
 
+        int faceId = face.getFaceId();
+
         if (extractFeature) {
-            FaceFeature feature = engineManager.extractFeatureNV21(nv21, width, height, face);
-            if (feature != null && feature.getFeatureData() != null) {
-                String b64 = Base64.encodeToString(feature.getFeatureData(), Base64.NO_WRAP);
-                map.put("featureBase64", b64);
-                
-                // 自动搜索人脸库
-                SearchResult searchResult = engineManager.faceDBSearchTop1(b64);
-                if (searchResult != null && searchResult.getFaceFeatureInfo() != null) {
-                    String tag = searchResult.getFaceFeatureInfo().getFaceTag();
-                    float score = searchResult.getMaxSimilar();
-                    // 使用传入的阈值
-                    if (tag != null && score >= scoreThreshold) {
-                        map.put("userId", tag);
-                        map.put("score", (double) score);
-                    }
+            // 优化策略：检查是否已识别
+            if (processedFaceIds.containsKey(faceId)) {
+                // 已识别，直接返回缓存的 userId
+                String userId = processedFaceIds.get(faceId);
+                if (userId != null && !userId.isEmpty()) {
+                    map.put("userId", userId);
+                    map.put("score", 1.0); // 缓存结果，score 设为 1.0 或之前的 score
+                    // Log.d(TAG, "Face " + faceId + " already recognized as " + userId + ", skipping extraction.");
                 }
             } else {
-                Log.w(TAG, "Feature extraction failed for faceId=" + face.getFaceId());
+                // 未识别或识别失败，检查重试次数
+                int retryCount = faceRetryCounts.containsKey(faceId) ? faceRetryCounts.get(faceId) : 0;
+
+                if (retryCount < maxRetryCount) {
+                    FaceFeature feature = engineManager.extractFeatureNV21(nv21, width, height, face);
+                    if (feature != null && feature.getFeatureData() != null) {
+                        String b64 = Base64.encodeToString(feature.getFeatureData(), Base64.NO_WRAP);
+                        map.put("featureBase64", b64);
+
+                        // 自动搜索人脸库
+                        SearchResult searchResult = engineManager.faceDBSearchTop1(b64);
+                        if (searchResult != null && searchResult.getFaceFeatureInfo() != null) {
+                            String tag = searchResult.getFaceFeatureInfo().getFaceTag();
+                            float score = searchResult.getMaxSimilar();
+                            // 使用传入的阈值
+                            if (tag != null && score >= scoreThreshold) {
+                                map.put("userId", tag);
+                                map.put("score", (double) score);
+
+                                // 识别成功，缓存状态
+                                processedFaceIds.put(faceId, tag);
+                                faceRetryCounts.remove(faceId);
+                            } else {
+                                // 识别失败（分数低），增加重试计数
+                                faceRetryCounts.put(faceId, retryCount + 1);
+                            }
+                        } else {
+                            // 搜索无结果，增加重试计数
+                            faceRetryCounts.put(faceId, retryCount + 1);
+                        }
+                    } else {
+                        Log.w(TAG, "Feature extraction failed for faceId=" + faceId);
+                        faceRetryCounts.put(faceId, retryCount + 1);
+                    }
+                } else {
+                    // 超过重试次数，不再尝试
+                    // Log.d(TAG, "Face " + faceId + " retry limit reached, skipping.");
+                }
             }
         }
 
@@ -133,6 +180,36 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
       Log.e(TAG, "Error processing frame", e);
       return null;
     }
+  }
+
+  // 清理不再画面中的人脸状态
+  private void cleanUpFaceStates(List<FaceInfo> currentFaces) {
+      List<Integer> currentIds = new ArrayList<>();
+      for (FaceInfo face : currentFaces) {
+          currentIds.add(face.getFaceId());
+      }
+
+      // 移除 processedFaceIds 中不存在于 currentIds 的键
+      List<Integer> toRemoveProcessed = new ArrayList<>();
+      for (Integer id : processedFaceIds.keySet()) {
+          if (!currentIds.contains(id)) {
+              toRemoveProcessed.add(id);
+          }
+      }
+      for (Integer id : toRemoveProcessed) {
+          processedFaceIds.remove(id);
+      }
+
+      // 移除 faceRetryCounts 中不存在于 currentIds 的键
+      List<Integer> toRemoveRetry = new ArrayList<>();
+      for (Integer id : faceRetryCounts.keySet()) {
+          if (!currentIds.contains(id)) {
+              toRemoveRetry.add(id);
+          }
+      }
+      for (Integer id : toRemoveRetry) {
+          faceRetryCounts.remove(id);
+      }
   }
 
   private String saveFrame(Image image, byte[] nv21) {
