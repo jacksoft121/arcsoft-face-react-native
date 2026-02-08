@@ -1,4 +1,5 @@
 import { VisionCameraProxy, type Frame } from 'react-native-vision-camera';
+import { Platform } from 'react-native';
 import ArcsoftFaceNative, {
   type FaceRect,
   type FaceInfo,
@@ -49,8 +50,56 @@ export const activateOnline = (appId: string, sdkKey: string): Promise<number> =
     ArcsoftFaceNative.activateOnline(appId, sdkKey);
 
 /** 获取激活文件信息 */
-export const getActiveFileInfo = (): Promise<ActiveFileInfo | null> =>
-    ArcsoftFaceNative.getActiveFileInfo();
+export const getActiveFileInfo = async (): Promise<ActiveFileInfo | null> => {
+    const info = await ArcsoftFaceNative.getActiveFileInfo();
+    if (!info) return null;
+
+    // 统一 iOS 和 Android 的时间格式
+    // Android: "1758270782" (秒级时间戳字符串)
+    // iOS: "2025/9/16, 08:16" (格式化字符串)
+    // 目标: 统一转换为秒级时间戳字符串
+
+    const parseTime = (timeStr: string | undefined): string => {
+        if (!timeStr) return "0";
+        // 如果已经是数字字符串，直接返回
+        if (/^\d+$/.test(timeStr)) return timeStr;
+
+        // 尝试解析日期字符串 (兼容 iOS 格式 "2025/9/16, 08:16")
+        // 将逗号替换为空格，或者直接尝试解析
+        // JS Date.parse 通常能处理 "2025/9/16 08:16"
+        const normalizedTimeStr = timeStr.replace(',', '');
+        const date = new Date(normalizedTimeStr);
+        if (!isNaN(date.getTime())) {
+            return Math.floor(date.getTime() / 1000).toString();
+        }
+        return "0";
+    };
+
+    let startTime = "0";
+    let endTime = "0";
+
+    if (Platform.OS === 'ios') {
+        // iOS 格式: "2025/9/16, 08:16"
+        startTime = parseTime(info.startTime);
+        endTime = parseTime(info.endTime);
+    } else {
+        // Android 格式: "1758270782" (秒级时间戳)
+        startTime = info.startTime || "0";
+        endTime = info.endTime || "0";
+    }
+
+    // 计算是否过期
+    const now = Math.floor(Date.now() / 1000);
+    const isExpired = now < Number(startTime) || now > Number(endTime);
+
+    return {
+        ...info,
+        startTime,
+        endTime,
+        // @ts-ignore: Adding extra property not in original type but useful for UI
+        isExpired
+    };
+};
 
 /** 初始化引擎（返回 0 表示成功） */
 export const initEngine = (options: InitEngineOptions = {}): Promise<number> =>

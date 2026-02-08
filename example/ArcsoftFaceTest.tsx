@@ -148,6 +148,7 @@ export default function TestScreen() {
     const doGetActiveInfo = useCallback(async () => {
         try {
             const info = await getActiveFileInfo();
+            // @ts-ignore
             setActiveInfo(info);
             appendLog(`getActiveFileInfo => ${JSON.stringify(info)}`);
         } catch (e: any) {
@@ -551,9 +552,16 @@ export default function TestScreen() {
                             <Text style={styles.badge}>{activated ? '已激活' : '未激活'}</Text>
                         </View>
                         {activeInfo && (
-                            <Text style={styles.note}>
-                                有效期: {activeInfo.expireTime}
-                            </Text>
+                            <View style={{marginTop: 10}}>
+                                <Text style={styles.note}>平台: {activeInfo.platform}</Text>
+                                <Text style={styles.note}>SDK版本: {activeInfo.sdkVersion}</Text>
+                                <Text style={styles.note}>有效期: {activeInfo.expireTime}</Text>
+                                <Text style={styles.note}>开始时间: {activeInfo.startTime}</Text>
+                                <Text style={styles.note}>结束时间: {activeInfo.endTime}</Text>
+                                <Text style={[styles.note, {color: activeInfo.isExpired ? 'red' : 'green', fontWeight: 'bold'}]}>
+                                    状态: {activeInfo.isExpired ? '已过期' : '未过期'}
+                                </Text>
+                            </View>
                         )}
                     </View>
 
@@ -702,7 +710,7 @@ export default function TestScreen() {
                                         <View>
                                             <Text style={styles.faceId}>ID: {item.id} | User: {item.userId}</Text>
                                             <Text style={styles.faceTime}>
-                                                {new Date(item.registerTime).toLocaleString()}
+                                                {new Date(Number(item.registerTime)).toLocaleString()}
                                             </Text>
                                         </View>
                                         <TouchableOpacity 
