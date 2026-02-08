@@ -195,32 +195,17 @@ export default function TestScreen() {
             appendLog(`getFaceCount => ${c}`);
             
             try {
-                // 传入 userId 进行过滤，如果 userId 为空则返回所有
-                // 这里我们使用输入框中的 userId，如果用户想看所有，可以清空输入框
-                // 但为了方便测试，我们先获取所有，或者根据需求调整
-                // 既然用户要求"可选传入 userId"，我们在刷新时可以尝试传入当前的 userId
-                // 但通常刷新是想看所有。
-                // 让我们修改逻辑：如果 userId 输入框有值，就按 userId 查，否则查所有。
-                // 不过 userId 状态是受控组件，可能随时在变。
-                // 为了演示，我们这里先查所有。如果需要查特定，可以加个按钮。
-                // 或者，我们在日志里打印带 userId 的查询结果。
-                
+                // @ts-ignore
                 const faces = await getAllFaces();
                 setFaceList(faces as FaceRecord[]);
-                appendLog(`getAllFaces(all) => ${faces.length} records`);
-                
-                // 如果 userId 有值，顺便测试一下按 userId 查询
-                if (userId) {
-                    const userFaces = await getAllFaces(userId);
-                    appendLog(`getAllFaces(${userId}) => ${userFaces.length} records`);
-                }
+                appendLog(`getAllFaces => ${JSON.stringify(faces)}`);
             } catch (e) {
                 // ignore if not implemented
             }
         } catch (e: any) {
             appendLog(`getFaceCount error: ${String(e?.message || e)}`);
         }
-    }, [appendLog, userId]); // Add userId dependency
+    }, [appendLog]);
 
     const doClearDB = useCallback(async () => {
         try {
@@ -497,22 +482,33 @@ export default function TestScreen() {
         setCameraPosition(p => (p === 'front' ? 'back' : 'front'));
     }, []);
 
-    const renderFaceItem = ({item}: {item: FaceRecord}) => (
-        <View style={styles.faceItem}>
-            <View>
-                <Text style={styles.faceId}>ID: {item.id} | User: {item.userId}</Text>
-                <Text style={styles.faceTime}>
-                    {new Date(item.registerTime).toLocaleString()}
-                </Text>
+    const renderFaceItem = ({item}: {item: FaceRecord}) => {
+        // Format timestamp to YYYY-MM-DD HH:mm:ss
+        const date = new Date(Number(item.registerTime));
+        
+        // Check if date is valid
+        let formattedDate = "Invalid Date";
+        if (!isNaN(date.getTime())) {
+            formattedDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
+        }
+        
+        return (
+            <View style={styles.faceItem}>
+                <View>
+                    <Text style={styles.faceId}>ID: {item.id} | User: {item.userId}</Text>
+                    <Text style={styles.faceTime}>
+                        {formattedDate}
+                    </Text>
+                </View>
+                <TouchableOpacity 
+                    style={styles.deleteBtn} 
+                    onPress={() => doRemoveFace(item.userId)}
+                >
+                    <Text style={styles.deleteBtnText}>删除</Text>
+                </TouchableOpacity>
             </View>
-            <TouchableOpacity 
-                style={styles.deleteBtn} 
-                onPress={() => doRemoveFace(item.userId)}
-            >
-                <Text style={styles.deleteBtnText}>删除</Text>
-            </TouchableOpacity>
-        </View>
-    );
+        );
+    };
 
     return (
         <SafeAreaView style={styles.root}>
@@ -706,7 +702,7 @@ export default function TestScreen() {
                                         <View>
                                             <Text style={styles.faceId}>ID: {item.id} | User: {item.userId}</Text>
                                             <Text style={styles.faceTime}>
-                                                {new Date(item.registerTime).toLocaleString()}
+                                                {new Date(Number(item.registerTime)).toLocaleString()}
                                             </Text>
                                         </View>
                                         <TouchableOpacity 
