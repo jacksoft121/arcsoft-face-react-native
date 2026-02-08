@@ -97,7 +97,7 @@ export default function TestScreen() {
 
     const [imageBase64, setImageBase64] = useState('');
     const [userId, setUserId] = useState('u_001');
-    const [imageUrl, setImageUrl] = useState('https://raw.githubusercontent.com/jackxu/arcsoft-face-react-native/main/example/assets/face_test.jpg');
+    const [imageUrl, setImageUrl] = useState('');
     const [dbCount, setDbCount] = useState(0);
     const [lastFaceCount, setLastFaceCount] = useState(0);
     const [log, setLog] = useState<string>('');
@@ -194,7 +194,7 @@ export default function TestScreen() {
             const c = await getFaceCount();
             setDbCount(c);
             appendLog(`getFaceCount => ${c}`);
-            
+
             try {
                 // 传入 userId 进行过滤，如果 userId 为空则返回所有
                 const faces = await getAllFaces(userId);
@@ -295,7 +295,7 @@ export default function TestScreen() {
         (frame: Frame) => {
             'worklet';
             if (!inited) return;
-            
+
             // 如果正在截图，不执行 runAtTargetFps 限制，直接执行以尽快捕获
             if (isCapturing) {
                 try {
@@ -452,7 +452,7 @@ export default function TestScreen() {
                 const ok = await activateOnline(appId.trim(), sdkKey.trim());
                 setActivated(ok === 0 || ok === 90114);
                 appendLog(`Auto activate => ${ok}`);
-                
+
                 if (ok === 0 || ok === 90114) {
                     const code = await initEngine({
                         detectMode: 'video',
@@ -473,7 +473,7 @@ export default function TestScreen() {
                 appendLog(`Auto init error: ${e.message}`);
             }
         };
-        
+
         if (hasPermission) {
             autoInit();
         }
@@ -483,16 +483,30 @@ export default function TestScreen() {
         setCameraPosition(p => (p === 'front' ? 'back' : 'front'));
     }, []);
 
+    const formatDate = (timestampStr: string | undefined): string => {
+        if (!timestampStr || timestampStr === '0') return 'N/A';
+        const timestamp = parseInt(timestampStr, 10);
+        if (isNaN(timestamp)) return 'Invalid Date';
+
+        const date = new Date(timestamp * 1000); // Convert from seconds to milliseconds
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+
+        return `${year}-${month}-${day} ${hours}:${minutes}`;
+    };
     const renderFaceItem = ({item}: {item: FaceRecord}) => {
         // Format timestamp to YYYY-MM-DD HH:mm:ss
         const date = new Date(Number(item.registerTime));
-        
+
         // Check if date is valid
         let formattedDate = "Invalid Date";
         if (!isNaN(date.getTime())) {
             formattedDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
         }
-        
+
         return (
             <View style={styles.faceItem}>
                 <View>
@@ -501,8 +515,8 @@ export default function TestScreen() {
                         {formattedDate}
                     </Text>
                 </View>
-                <TouchableOpacity 
-                    style={styles.deleteBtn} 
+                <TouchableOpacity
+                    style={styles.deleteBtn}
                     onPress={() => doRemoveFace(item.userId)}
                 >
                     <Text style={styles.deleteBtnText}>删除</Text>
@@ -555,9 +569,8 @@ export default function TestScreen() {
                             <View style={{marginTop: 10}}>
                                 <Text style={styles.note}>平台: {activeInfo.platform}</Text>
                                 <Text style={styles.note}>SDK版本: {activeInfo.sdkVersion}</Text>
-                                <Text style={styles.note}>有效期: {activeInfo.expireTime}</Text>
-                                <Text style={styles.note}>开始时间: {activeInfo.startTime}</Text>
-                                <Text style={styles.note}>结束时间: {activeInfo.endTime}</Text>
+                                <Text style={styles.note}>开始时间: {formatDate(activeInfo.startTime)}</Text>
+                                <Text style={styles.note}>结束时间: {formatDate(activeInfo.endTime)}</Text>
                                 <Text style={[styles.note, {color: activeInfo.isExpired ? 'red' : 'green', fontWeight: 'bold'}]}>
                                     状态: {activeInfo.isExpired ? '已过期' : '未过期'}
                                 </Text>
@@ -713,8 +726,8 @@ export default function TestScreen() {
                                                 {new Date(Number(item.registerTime)).toLocaleString()}
                                             </Text>
                                         </View>
-                                        <TouchableOpacity 
-                                            style={styles.deleteBtn} 
+                                        <TouchableOpacity
+                                            style={styles.deleteBtn}
                                             onPress={() => doRemoveFace(item.userId)}
                                         >
                                             <Text style={styles.deleteBtnText}>删除</Text>

@@ -61,12 +61,29 @@ export const getActiveFileInfo = async (): Promise<ActiveFileInfo | null> => {
 
     const parseTime = (timeStr: string | undefined): string => {
         if (!timeStr) return "0";
-        // 如果已经是数字字符串，直接返回
+        // If already a numeric string, return directly
         if (/^\d+$/.test(timeStr)) return timeStr;
 
-        // 尝试解析日期字符串 (兼容 iOS 格式 "2025/9/16, 08:16")
-        // 将逗号替换为空格，或者直接尝试解析
-        // JS Date.parse 通常能处理 "2025/9/16 08:16"
+        // Specifically handle iOS format: "2025/9/16, 08:16"
+        // Parse format: yyyy/MM/dd, HH:mm
+        const iosDatePattern = /^(\d{4})\/(\d{1,2})\/(\d{1,2}),\s*(\d{1,2}):(\d{1,2})$/;
+        const match = timeStr.match(iosDatePattern);
+
+        if (match) {
+            const [, year, month, day, hour, minute] = match;
+            const date = new Date(
+                parseInt(year, 10),
+                parseInt(month, 10) - 1, // Months are 0-11 in JavaScript
+                parseInt(day, 10),
+                parseInt(hour, 10),
+                parseInt(minute, 10)
+            );
+            if (!isNaN(date.getTime())) {
+                return Math.floor(date.getTime() / 1000).toString();
+            }
+        }
+
+        // Fallback: try normalized parsing
         const normalizedTimeStr = timeStr.replace(',', '');
         const date = new Date(normalizedTimeStr);
         if (!isNaN(date.getTime())) {
@@ -74,6 +91,7 @@ export const getActiveFileInfo = async (): Promise<ActiveFileInfo | null> => {
         }
         return "0";
     };
+
 
     let startTime = "0";
     let endTime = "0";
