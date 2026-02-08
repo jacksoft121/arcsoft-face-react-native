@@ -105,7 +105,7 @@ export interface Spec {
   ): Promise<{ id: string | null; score: number }>;
   
   /** 获取所有人脸列表 (仅用于测试) */
-  getAllFaces(): Promise<Array<{ id: string; userId: string; registerTime: number }>>;
+  getAllFaces(userId?: string): Promise<Array<{ id: string; userId: string; registerTime: number }>>;
 
   setLogLevel(level: number): Promise<boolean>;
 }

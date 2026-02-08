@@ -198,6 +198,7 @@ export default function TestScreen() {
                 // @ts-ignore
                 const faces = await getAllFaces();
                 setFaceList(faces as FaceRecord[]);
+                appendLog(`getAllFaces => ${JSON.stringify(faces)}`);
             } catch (e) {
                 // ignore if not implemented
             }
@@ -443,8 +444,39 @@ export default function TestScreen() {
     }, [imageBase64, appendLog]);
 
     useEffect(() => {
-        refreshDBCount();
-    }, [refreshDBCount]);
+        // Auto init on mount
+        const autoInit = async () => {
+            try {
+                await setLogLevel(5);
+                const ok = await activateOnline(appId.trim(), sdkKey.trim());
+                setActivated(ok === 0 || ok === 90114);
+                appendLog(`Auto activate => ${ok}`);
+                
+                if (ok === 0 || ok === 90114) {
+                    const code = await initEngine({
+                        detectMode: 'video',
+                        maxFaceNum: 10,
+                        scale: 16,
+                        enableAge: false,
+                        enableGender: false,
+                        enableLiveness: false,
+                        enable3DAngle: false,
+                    });
+                    appendLog(`Auto initEngine => ${code}`);
+                    if (code === 0) {
+                        setInited(true);
+                        refreshDBCount();
+                    }
+                }
+            } catch (e: any) {
+                appendLog(`Auto init error: ${e.message}`);
+            }
+        };
+        
+        if (hasPermission) {
+            autoInit();
+        }
+    }, [hasPermission, appId, sdkKey, appendLog, refreshDBCount]);
 
     const toggleCamera = useCallback(() => {
         setCameraPosition(p => (p === 'front' ? 'back' : 'front'));
@@ -653,13 +685,24 @@ export default function TestScreen() {
                         {faceList.length === 0 ? (
                             <Text style={styles.note}>暂无数据 (或原生未实现 getAllFaces)</Text>
                         ) : (
-                            <FlatList
-                                data={faceList}
-                                keyExtractor={(item) => item.id}
-                                renderItem={renderFaceItem}
-                                style={{maxHeight: 200, marginTop: 8}}
-                                nestedScrollEnabled
-                            />
+                            <View style={{marginTop: 8}}>
+                                {faceList.map((item) => (
+                                    <View key={item.id} style={styles.faceItem}>
+                                        <View>
+                                            <Text style={styles.faceId}>ID: {item.id} | User: {item.userId}</Text>
+                                            <Text style={styles.faceTime}>
+                                                {new Date(item.registerTime).toLocaleString()}
+                                            </Text>
+                                        </View>
+                                        <TouchableOpacity 
+                                            style={styles.deleteBtn} 
+                                            onPress={() => doRemoveFace(item.userId)}
+                                        >
+                                            <Text style={styles.deleteBtnText}>删除</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                ))}
+                            </View>
                         )}
                     </View>
 
