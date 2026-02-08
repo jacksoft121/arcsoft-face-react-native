@@ -181,20 +181,33 @@
     CGImageRef cgImage = image.CGImage;
     size_t width = CGImageGetWidth(cgImage);
     size_t height = CGImageGetHeight(cgImage);
+
+    // 确保宽度是 4 的倍数 (ArcSoft 要求)
+    size_t alignedWidth = (width + 3) & ~3;
+
+    NSLog(@"[ArcsoftEngineManager] offscreenFromImage: original size=%zux%zu, aligned width=%zu", width, height, alignedWidth);
+
     size_t bitsPerComponent = 8;
-    size_t bytesPerRow = width * 4;
+    size_t bytesPerRow = alignedWidth * 4;
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
 
     // Explicitly cast malloc's void* to MUInt8*
     MUInt8 *data = (MUInt8 *)malloc(bytesPerRow * height);
 
-    CGContextRef context = CGBitmapContextCreate(data, width, height, bitsPerComponent, bytesPerRow, colorSpace, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    // 使用对齐后的宽度创建 Context
+    // 注意：iOS 上 BGRA 通常使用 kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little
+    // 或者 kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little
+    // 之前的 kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big 实际上是 RGBA
+    // ArcSoft ASVL_PAF_RGB32_B8G8R8A8 对应 BGRA
+    // 我们尝试使用标准的 BGRA 配置
+    CGContextRef context = CGBitmapContextCreate(data, alignedWidth, height, bitsPerComponent, bytesPerRow, colorSpace, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
 
+    // 绘制原始图片
     CGContextDrawImage(context, CGRectMake(0, 0, width, height), cgImage);
 
     ASVLOFFSCREEN offscreen = {0};
-    offscreen.u32PixelArrayFormat = ASVL_PAF_RGB32_B8G8R8A8; // Assuming BGRA
-    offscreen.i32Width = (int)width;
+    offscreen.u32PixelArrayFormat = ASVL_PAF_RGB32_B8G8R8A8; // BGRA
+    offscreen.i32Width = (int)alignedWidth;
     offscreen.i32Height = (int)height;
     offscreen.ppu8Plane[0] = data;
     offscreen.pi32Pitch[0] = (int)bytesPerRow;
@@ -270,7 +283,10 @@
  */
 - (NSArray<NSDictionary *> *)detectFaces:(ASVLOFFSCREEN *)offscreen {
   @synchronized (self) {
-      if (!self.inited || offscreen == NULL) return @[];
+      if (!self.inited || offscreen == NULL) {
+          NSLog(@"[ArcsoftEngineManager] detectFaces: engine not inited or offscreen is NULL");
+          return @[];
+      }
 
       ASF_MultiFaceInfo faces = {0};
       MRESULT result = [self.engine detectFacesWithWidth:offscreen->i32Width
@@ -279,7 +295,16 @@
                                                   format:offscreen->u32PixelArrayFormat
                                                  faceRes:&faces];
 
-      if (result != MOK) return @[];
+      if (result != MOK) {
+          NSLog(@"[ArcsoftEngineManager] detectFaces failed with code: %ld", (long)result);
+          return @[];
+      }
+
+      if (faces.faceNum == 0) {
+          NSLog(@"[ArcsoftEngineManager] detectFaces: No faces detected");
+      } else {
+          NSLog(@"[ArcsoftEngineManager] detectFaces: Detected %d faces", faces.faceNum);
+      }
 
       [self processFaces:offscreen faces:&faces];
 
@@ -305,9 +330,19 @@
  * 人脸检测 (图片)
  */
 - (NSArray<NSDictionary *> *)detectFacesFromImage:(UIImage *)image {
-    if (!self.inited || !image) return @[];
+    if (!self.inited || !image) {
+        NSLog(@"[ArcsoftEngineManager] detectFacesFromImage: invalid input. inited=%d, image=%@", self.inited, image);
+        return @[];
+    }
+
+    NSLog(@"[ArcsoftEngineManager] detectFacesFromImage: image size={%f, %f}, scale=%f", image.size.width, image.size.height, image.scale);
+
     ASVLOFFSCREEN offscreen = [self offscreenFromImage:image];
+    NSLog(@"[ArcsoftEngineManager] detectFacesFromImage: offscreen created. width=%d, height=%d, format=0x%x", offscreen.i32Width, offscreen.i32Height, offscreen.u32PixelArrayFormat);
+
     NSArray<NSDictionary *> *faces = [self detectFaces:&offscreen];
+    NSLog(@"[ArcsoftEngineManager] detectFacesFromImage: detected %lu faces", (unsigned long)faces.count);
+
     [self freeOffscreen:&offscreen];
     return faces;
 }
