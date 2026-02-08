@@ -195,17 +195,17 @@ export default function TestScreen() {
             appendLog(`getFaceCount => ${c}`);
             
             try {
-                // @ts-ignore
-                const faces = await getAllFaces();
+                // 传入 userId 进行过滤，如果 userId 为空则返回所有
+                const faces = await getAllFaces(userId);
                 setFaceList(faces as FaceRecord[]);
-                appendLog(`getAllFaces => ${JSON.stringify(faces)}`);
+                appendLog(`getAllFaces(${userId || 'all'}) => ${faces.length} records`);
             } catch (e) {
                 // ignore if not implemented
             }
         } catch (e: any) {
             appendLog(`getFaceCount error: ${String(e?.message || e)}`);
         }
-    }, [appendLog]);
+    }, [appendLog, userId]); // Add userId dependency
 
     const doClearDB = useCallback(async () => {
         try {
@@ -702,7 +702,7 @@ export default function TestScreen() {
                                         <View>
                                             <Text style={styles.faceId}>ID: {item.id} | User: {item.userId}</Text>
                                             <Text style={styles.faceTime}>
-                                                {new Date(Number(item.registerTime)).toLocaleString()}
+                                                {new Date(item.registerTime).toLocaleString()}
                                             </Text>
                                         </View>
                                         <TouchableOpacity 
