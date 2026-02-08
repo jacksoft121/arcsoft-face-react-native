@@ -55,10 +55,12 @@ NS_ASSUME_NONNULL_BEGIN
 /// @param offscreen 图像数据
 /// @param rect 人脸框
 /// @param orient 人脸角度
+/// @param faceDataInfo 人脸数据信息 (必须从 detectFaces 结果中获取)
 /// @return Base64 编码的特征数据
 - (nullable NSString *)extractFeature:(ASVLOFFSCREEN *)offscreen
                              faceRect:(MRECT)rect
-                               orient:(int)orient;
+                               orient:(int)orient
+                         faceDataInfo:(nullable NSData *)faceDataInfo;
 
 /// 提取人脸特征 (图片)
 /// @param image UIImage 对象

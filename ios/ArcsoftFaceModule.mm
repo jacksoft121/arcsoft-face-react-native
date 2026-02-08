@@ -351,7 +351,8 @@ RCT_EXPORT_METHOD(extractFeatureNV21:(NSArray *)nv21
   };
   int orient = [face[@"orient"] intValue];
 
-  NSString *featBase64 = [self.engineManager extractFeature:&offscreen faceRect:rect orient:orient];
+  // 修复：传入 nil 作为 faceDataInfo
+  NSString *featBase64 = [self.engineManager extractFeature:&offscreen faceRect:rect orient:orient faceDataInfo:nil];
 
   long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
 

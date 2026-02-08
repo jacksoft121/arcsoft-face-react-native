@@ -63,39 +63,43 @@
 - (int)activateWithAppId:(NSString *)appId
                  sdkKey:(NSString *)sdkKey
               activeKey:(NSString *)activeKey {
-  NSLog(@"[ArcsoftEngineManager] activateWithAppId: engine=%@", self.engine);
+  @synchronized (self) {
+      NSLog(@"[ArcsoftEngineManager] activateWithAppId: engine=%@", self.engine);
 
-  if (!self.engine) {
-      NSLog(@"[ArcsoftEngineManager] Error: engine is nil");
-      return -1;
+      if (!self.engine) {
+          NSLog(@"[ArcsoftEngineManager] Error: engine is nil");
+          return -1;
+      }
+      return [self.engine activeWithAppId:appId SDKKey:sdkKey];
   }
-  return [self.engine activeWithAppId:appId SDKKey:sdkKey];
 }
 
 /**
  * 获取激活文件信息
  */
 - (nullable NSDictionary *)getActiveFileInfo {
-    if (!self.engine) return nil;
+    @synchronized (self) {
+        if (!self.engine) return nil;
 
-    ArcSoftActiveInfo *activeInfo = [[ArcSoftActiveInfo alloc] init];
-    MRESULT result = [self.engine getActiveFileInfo:activeInfo];
+        ArcSoftActiveInfo *activeInfo = [[ArcSoftActiveInfo alloc] init];
+        MRESULT result = [self.engine getActiveFileInfo:activeInfo];
 
-    if (result != MOK) {
-        NSLog(@"[ArcsoftEngineManager] getActiveFileInfo failed: %ld", (long)result);
-        return nil;
+        if (result != MOK) {
+            NSLog(@"[ArcsoftEngineManager] getActiveFileInfo failed: %ld", (long)result);
+            return nil;
+        }
+
+        return @{
+            @"appId": activeInfo.appId ?: @"",
+            @"sdkKey": activeInfo.sdkKey ?: @"",
+            @"platform": activeInfo.platform ?: @"",
+            @"sdkVersion": activeInfo.sdkVersion ?: @"",
+            @"fileVersion": activeInfo.fileVersion ?: @"",
+            @"expireTime": activeInfo.endTime ?: @"",
+            // deviceFingerprint is not available in ArcSoftActiveInfo for iOS
+            @"deviceFingerprint": @""
+        };
     }
-
-    return @{
-        @"appId": activeInfo.appId ?: @"",
-        @"sdkKey": activeInfo.sdkKey ?: @"",
-        @"platform": activeInfo.platform ?: @"",
-        @"sdkVersion": activeInfo.sdkVersion ?: @"",
-        @"fileVersion": activeInfo.fileVersion ?: @"",
-        @"expireTime": activeInfo.endTime ?: @"",
-        // deviceFingerprint is not available in ArcSoftActiveInfo for iOS
-        @"deviceFingerprint": @""
-    };
 }
 
 /**
@@ -105,20 +109,22 @@
                  orientPriority:(ASF_OrientPriority)orientPriority
                      maxFaceNum:(int)maxFaceNum
                    combinedMask:(int)combinedMask {
-  NSLog(@"[ArcsoftEngineManager] initEngineWithDetectMode: mask=%d", combinedMask);
-  self.combinedMask = combinedMask;
-  int code = [self.engine initFaceEngineWithDetectMode:detectMode
-                             orientPriority:orientPriority
-                                 maxFaceNum:maxFaceNum
-                               combinedMask:combinedMask];
-  self.inited = (code == MOK);
-  NSLog(@"[ArcsoftEngineManager] initEngine result: %d", code);
+  @synchronized (self) {
+      NSLog(@"[ArcsoftEngineManager] initEngineWithDetectMode: mask=%d", combinedMask);
+      self.combinedMask = combinedMask;
+      int code = [self.engine initFaceEngineWithDetectMode:detectMode
+                                 orientPriority:orientPriority
+                                     maxFaceNum:maxFaceNum
+                                   combinedMask:combinedMask];
+      self.inited = (code == MOK);
+      NSLog(@"[ArcsoftEngineManager] initEngine result: %d", code);
 
-  if (self.inited) {
-      [self loadFacesFromDB];
+      if (self.inited) {
+          [self loadFacesFromDB];
+      }
+
+      return code;
   }
-
-  return code;
 }
 
 - (void)loadFacesFromDB {
@@ -156,13 +162,15 @@
  * 销毁引擎
  */
 - (void)uninit {
-  if (self.inited) {
-    [self.engine unInitFaceEngine];
-    self.inited = NO;
+  @synchronized (self) {
+      if (self.inited) {
+        [self.engine unInitFaceEngine];
+        self.inited = NO;
 
-    // Clear DB maps
-    [self.userToSearchId removeAllObjects];
-    [self.searchIdToUser removeAllObjects];
+        // Clear DB maps
+        [self.userToSearchId removeAllObjects];
+        [self.searchIdToUser removeAllObjects];
+      }
   }
 }
 
@@ -261,28 +269,36 @@
  * 人脸检测 (视频流)
  */
 - (NSArray<NSDictionary *> *)detectFaces:(ASVLOFFSCREEN *)offscreen {
-  if (!self.inited || offscreen == NULL) return @[];
+  @synchronized (self) {
+      if (!self.inited || offscreen == NULL) return @[];
 
-  ASF_MultiFaceInfo faces = {0};
-  MRESULT result = [self.engine detectFacesWithWidth:offscreen->i32Width
-                                              height:offscreen->i32Height
-                                                data:offscreen->ppu8Plane[0]
-                                              format:offscreen->u32PixelArrayFormat
-                                             faceRes:&faces];
+      ASF_MultiFaceInfo faces = {0};
+      MRESULT result = [self.engine detectFacesWithWidth:offscreen->i32Width
+                                                  height:offscreen->i32Height
+                                                    data:offscreen->ppu8Plane[0]
+                                                  format:offscreen->u32PixelArrayFormat
+                                                 faceRes:&faces];
 
-  if (result != MOK) return @[];
+      if (result != MOK) return @[];
 
-  [self processFaces:offscreen faces:&faces];
+      [self processFaces:offscreen faces:&faces];
 
-  NSMutableArray *out = [NSMutableArray arrayWithCapacity:faces.faceNum];
-  for (int i = 0; i < faces.faceNum; i++) {
-    MRECT r = faces.faceRect[i];
-    [out addObject:@{
-      @"rect": @{ @"left": @(r.left), @"top": @(r.top), @"right": @(r.right), @"bottom": @(r.bottom) },
-      @"orient": @(faces.faceOrient[i]),
-    }];
+      NSMutableArray *out = [NSMutableArray arrayWithCapacity:faces.faceNum];
+      for (int i = 0; i < faces.faceNum; i++) {
+        MRECT r = faces.faceRect[i];
+
+        // 提取 faceDataInfo 并序列化
+        ASF_FaceDataInfo dataInfo = faces.faceDataInfoList[i];
+        NSData *faceData = [NSData dataWithBytes:dataInfo.data length:dataInfo.dataSize];
+
+        [out addObject:@{
+          @"rect": @{ @"left": @(r.left), @"top": @(r.top), @"right": @(r.right), @"bottom": @(r.bottom) },
+          @"orient": @(faces.faceOrient[i]),
+          @"faceDataInfo": faceData // 传递 faceDataInfo
+        }];
+      }
+      return out;
   }
-  return out;
 }
 
 /**
@@ -301,25 +317,48 @@
  */
 - (NSString *)extractFeature:(ASVLOFFSCREEN *)offscreen
                     faceRect:(MRECT)rect
-                      orient:(int)orient {
-  if (!self.inited || offscreen == NULL) return nil;
+                      orient:(int)orient
+                faceDataInfo:(NSData *)faceDataInfo {
+  @synchronized (self) {
+      if (!self.inited || offscreen == NULL) return nil;
 
-  ASF_SingleFaceInfo info = {0};
-  info.faceRect = rect;
-  info.faceOrient = orient;
+      // 确保 rect 4字节对齐
+      MRECT alignedRect = rect;
+      alignedRect.left = (alignedRect.left / 4) * 4;
+      alignedRect.top = (alignedRect.top / 4) * 4;
+      alignedRect.right = (alignedRect.right / 4) * 4;
+      alignedRect.bottom = (alignedRect.bottom / 4) * 4;
 
-  ASF_FaceFeature feature = {0};
-  MRESULT result = [self.engine extractFaceFeatureWithWidth:offscreen->i32Width
-                                                     height:offscreen->i32Height
-                                                       data:offscreen->ppu8Plane[0]
-                                                     format:offscreen->u32PixelArrayFormat
-                                                   faceInfo:&info
-                                                    feature:&feature];
+      ASF_SingleFaceInfo info = {0};
+      info.faceRect = alignedRect;
+      info.faceOrient = orient;
 
-  if (result != MOK || feature.featureSize <= 0 || feature.feature == NULL) return nil;
+      // 填充 faceDataInfo
+      if (faceDataInfo) {
+          info.faceDataInfo.data = (MByte *)faceDataInfo.bytes;
+          info.faceDataInfo.dataSize = (MInt32)faceDataInfo.length;
+      }
 
-  NSData *data = [NSData dataWithBytes:feature.feature length:(NSUInteger)feature.featureSize];
-  return [data base64EncodedStringWithOptions:0];
+      ASF_FaceFeature feature = {0};
+      MRESULT result = [self.engine extractFaceFeatureWithWidth:offscreen->i32Width
+                                                         height:offscreen->i32Height
+                                                           data:offscreen->ppu8Plane[0]
+                                                         format:offscreen->u32PixelArrayFormat
+                                                       faceInfo:&info
+                                                        feature:&feature];
+
+      if (result != MOK) {
+          NSLog(@"[ArcsoftEngineManager] extractFaceFeature failed: %ld", (long)result);
+          return nil;
+      }
+      if (feature.featureSize <= 0 || feature.feature == NULL) {
+          NSLog(@"[ArcsoftEngineManager] extractFaceFeature returned empty feature");
+          return nil;
+      }
+
+      NSData *data = [NSData dataWithBytes:feature.feature length:(NSUInteger)feature.featureSize];
+      return [data base64EncodedStringWithOptions:0];
+  }
 }
 
 /**
@@ -338,7 +377,10 @@
     };
     int orient = [faceInfo[@"orient"] intValue];
 
-    NSString *feature = [self extractFeature:&offscreen faceRect:rect orient:orient];
+    // 从 faceInfo 中获取 faceDataInfo
+    NSData *faceDataInfo = faceInfo[@"faceDataInfo"];
+
+    NSString *feature = [self extractFeature:&offscreen faceRect:rect orient:orient faceDataInfo:faceDataInfo];
 
     [self freeOffscreen:&offscreen];
     return feature;
@@ -348,19 +390,21 @@
  * 特征比对
  */
 - (float)compareFeature1:(NSData *)f1 feature2:(NSData *)f2 {
-  if (!self.inited || !f1 || !f2) return 0.f;
+  @synchronized (self) {
+      if (!self.inited || !f1 || !f2) return 0.f;
 
-  ASF_FaceFeature ff1 = {0};
-  ff1.featureSize = (int)f1.length;
-  ff1.feature = (MByte *)f1.bytes;
+      ASF_FaceFeature ff1 = {0};
+      ff1.featureSize = (int)f1.length;
+      ff1.feature = (MByte *)f1.bytes;
 
-  ASF_FaceFeature ff2 = {0};
-  ff2.featureSize = (int)f2.length;
-  ff2.feature = (MByte *)f2.bytes;
+      ASF_FaceFeature ff2 = {0};
+      ff2.featureSize = (int)f2.length;
+      ff2.feature = (MByte *)f2.bytes;
 
-  MFloat confidenceLevel = 0.0;
-  [self.engine compareFaceWithFeature:&ff1 feature2:&ff2 confidenceLevel:&confidenceLevel];
-  return confidenceLevel;
+      MFloat confidenceLevel = 0.0;
+      [self.engine compareFaceWithFeature:&ff1 feature2:&ff2 confidenceLevel:&confidenceLevel];
+      return confidenceLevel;
+  }
 }
 
 - (NSArray<NSNumber *> *)getAges { return self.lastAges ?: @[]; }
@@ -376,85 +420,91 @@
  * 注册/更新人脸特征
  */
 - (BOOL)faceDBAddOrUpdate:(NSString *)userId featureData:(NSData *)featureData {
-    if (!self.inited || !userId.length || !featureData.length) return NO;
+    @synchronized (self) {
+        if (!self.inited || !userId.length || !featureData.length) return NO;
 
-    // 1. Save to DB
-    [[FaceDB sharedInstance] addFace:userId feature:featureData];
+        // 1. Save to DB
+        [[FaceDB sharedInstance] addFace:userId feature:featureData];
 
-    // 2. Update Engine
-    // 检查是否已存在
-    NSNumber *existingId = self.userToSearchId[userId];
-    if (existingId) {
-        // 如果已存在，先移除旧的
-        [self.engine removeFaceFeatureWithSearchId:[existingId intValue]];
-        [self.userToSearchId removeObjectForKey:userId];
-        [self.searchIdToUser removeObjectForKey:existingId];
+        // 2. Update Engine
+        // 检查是否已存在
+        NSNumber *existingId = self.userToSearchId[userId];
+        if (existingId) {
+            // 如果已存在，先移除旧的
+            [self.engine removeFaceFeatureWithSearchId:[existingId intValue]];
+            [self.userToSearchId removeObjectForKey:userId];
+            [self.searchIdToUser removeObjectForKey:existingId];
+        }
+
+        // 分配新 ID
+        int searchId = self.nextSearchId++;
+
+        // 构造注册信息
+        ASF_FaceFeature featureStruct = {0};
+        featureStruct.feature = (MByte *)featureData.bytes;
+        featureStruct.featureSize = (MInt32)featureData.length;
+
+        ASF_FaceFeatureInfo info = {0};
+        info.searchId = searchId;
+        info.feature = &featureStruct;
+        info.tag = "";
+
+        // 调用引擎注册
+        MRESULT mr = [self.engine registerSingleFaceFeatureWithFeatureInfo:&info];
+        if (mr == MOK) {
+            // 更新映射
+            self.userToSearchId[userId] = @(searchId);
+            self.searchIdToUser[@(searchId)] = userId;
+            return YES;
+        }
+
+        return NO;
     }
-
-    // 分配新 ID
-    int searchId = self.nextSearchId++;
-
-    // 构造注册信息
-    ASF_FaceFeature featureStruct = {0};
-    featureStruct.feature = (MByte *)featureData.bytes;
-    featureStruct.featureSize = (MInt32)featureData.length;
-
-    ASF_FaceFeatureInfo info = {0};
-    info.searchId = searchId;
-    info.feature = &featureStruct;
-    info.tag = "";
-
-    // 调用引擎注册
-    MRESULT mr = [self.engine registerSingleFaceFeatureWithFeatureInfo:&info];
-    if (mr == MOK) {
-        // 更新映射
-        self.userToSearchId[userId] = @(searchId);
-        self.searchIdToUser[@(searchId)] = userId;
-        return YES;
-    }
-
-    return NO;
 }
 
 /**
  * 移除人脸特征
  */
 - (BOOL)faceDBRemove:(NSString *)userId {
-    if (!self.inited || !userId.length) return NO;
+    @synchronized (self) {
+        if (!self.inited || !userId.length) return NO;
 
-    // 1. Remove from DB
-    [[FaceDB sharedInstance] removeFace:userId];
+        // 1. Remove from DB
+        [[FaceDB sharedInstance] removeFace:userId];
 
-    // 2. Remove from Engine
-    NSNumber *searchId = self.userToSearchId[userId];
-    if (!searchId) return NO;
+        // 2. Remove from Engine
+        NSNumber *searchId = self.userToSearchId[userId];
+        if (!searchId) return NO;
 
-    MRESULT mr = [self.engine removeFaceFeatureWithSearchId:[searchId intValue]];
+        MRESULT mr = [self.engine removeFaceFeatureWithSearchId:[searchId intValue]];
 
-    // 无论引擎返回成功与否，都清理本地映射
-    [self.userToSearchId removeObjectForKey:userId];
-    [self.searchIdToUser removeObjectForKey:searchId];
+        // 无论引擎返回成功与否，都清理本地映射
+        [self.userToSearchId removeObjectForKey:userId];
+        [self.searchIdToUser removeObjectForKey:searchId];
 
-    return (mr == MOK);
+        return (mr == MOK);
+    }
 }
 
 /**
  * 清空人脸库
  */
 - (BOOL)faceDBClear {
-    if (!self.inited) return NO;
+    @synchronized (self) {
+        if (!self.inited) return NO;
 
-    // 1. Clear DB
-    [[FaceDB sharedInstance] clearAll];
+        // 1. Clear DB
+        [[FaceDB sharedInstance] clearAll];
 
-    // 2. Clear Engine
-    MRESULT mr = [self.engine clearAllFaceFeature];
+        // 2. Clear Engine
+        MRESULT mr = [self.engine clearAllFaceFeature];
 
-    [self.userToSearchId removeAllObjects];
-    [self.searchIdToUser removeAllObjects];
-    self.nextSearchId = 1000;
+        [self.userToSearchId removeAllObjects];
+        [self.searchIdToUser removeAllObjects];
+        self.nextSearchId = 1000;
 
-    return (mr == MOK);
+        return (mr == MOK);
+    }
 }
 
 /**
@@ -471,33 +521,35 @@
  * 搜索人脸 (1:N)
  */
 - (NSDictionary * _Nullable)faceDBSearchTop1:(NSData *)featureData threshold:(float)threshold {
-    if (!self.inited || !featureData.length) return nil;
+    @synchronized (self) {
+        if (!self.inited || !featureData.length) return nil;
 
-    ASF_FaceFeature feature = {0};
-    feature.feature = (MByte *)featureData.bytes;
-    feature.featureSize = (MInt32)featureData.length;
+        ASF_FaceFeature feature = {0};
+        feature.feature = (MByte *)featureData.bytes;
+        feature.featureSize = (MInt32)featureData.length;
 
-    ASF_FaceFeatureInfo resultInfo = {0};
-    MFloat confidence = 0.0f;
+        ASF_FaceFeatureInfo resultInfo = {0};
+        MFloat confidence = 0.0f;
 
-    // 1:N 搜索
-    MRESULT mr = [self.engine searchFaceFeatureWithFeature:&feature
-                                         compareModel:ASF_LIFE_PHOTO
-                                           similarity:&confidence
-                                      faceFeatureInfo:&resultInfo];
+        // 1:N 搜索
+        MRESULT mr = [self.engine searchFaceFeatureWithFeature:&feature
+                                             compareModel:ASF_LIFE_PHOTO
+                                               similarity:&confidence
+                                          faceFeatureInfo:&resultInfo];
 
-    if (mr == MOK && confidence >= threshold) {
-        // 反查 userId
-        NSString *userId = self.searchIdToUser[@(resultInfo.searchId)];
-        if (userId) {
-            return @{
-                @"id": userId,
-                @"score": @(confidence)
-            };
+        if (mr == MOK && confidence >= threshold) {
+            // 反查 userId
+            NSString *userId = self.searchIdToUser[@(resultInfo.searchId)];
+            if (userId) {
+                return @{
+                    @"id": userId,
+                    @"score": @(confidence)
+                };
+            }
         }
-    }
 
-    return nil;
+        return nil;
+    }
 }
 
 @end
