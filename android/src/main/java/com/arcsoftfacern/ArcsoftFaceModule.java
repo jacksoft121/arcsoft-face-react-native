@@ -200,10 +200,11 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
       map.putString("appId", info.getAppId());
       map.putString("sdkKey", info.getSdkKey());
       map.putString("platform", info.getPlatform());
+      map.putString("sdkType", info.getSdkType());
       map.putString("sdkVersion", info.getSdkVersion());
       map.putString("fileVersion", info.getFileVersion());
-      map.putString("expireTime", info.getEndTime()); // Android 使用 getEndTime
-      map.putString("deviceFingerprint", ""); // Android 暂无
+      map.putString("startTime", info.getStartTime());
+      map.putString("endTime", info.getEndTime());
       Log.d(TAG, "getActiveFileInfo => ok, cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(map);
     } catch (Throwable t) {

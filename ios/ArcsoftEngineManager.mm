@@ -93,9 +93,11 @@
             @"appId": activeInfo.appId ?: @"",
             @"sdkKey": activeInfo.sdkKey ?: @"",
             @"platform": activeInfo.platform ?: @"",
+            @"sdkType": activeInfo.sdkType ?: @"",
             @"sdkVersion": activeInfo.sdkVersion ?: @"",
             @"fileVersion": activeInfo.fileVersion ?: @"",
-            @"expireTime": activeInfo.endTime ?: @"",
+            @"startTime": activeInfo.startTime ?: @"",
+            @"endTime": activeInfo.endTime ?: @"",
             // deviceFingerprint is not available in ArcSoftActiveInfo for iOS
             @"deviceFingerprint": @""
         };
