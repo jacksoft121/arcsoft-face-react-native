@@ -113,6 +113,12 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
                       if (retryCount >= maxRetryCount) {
                           // 超过重试次数，不再尝试
                           needRecognition = NO;
+
+                          // 但如果之前有缓存的特征值，返回它 (方便注册陌生人)
+                          NSString *cachedFeature = self.faceFeatures[faceIdNum];
+                          if (cachedFeature) {
+                              faceMutable[@"featureBase64"] = cachedFeature;
+                          }
                       }
                   }
               }
@@ -133,7 +139,12 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
 
                   if (featBase64) {
                       faceMutable[@"featureBase64"] = featBase64;
-                      self.faceFeatures[faceIdNum] = featBase64; // 缓存特征值
+
+                      // 只要提取成功，就更新特征缓存 (即使是陌生人)
+                      if (faceIdNum) {
+                          self.faceFeatures[faceIdNum] = featBase64;
+                      }
+
                       // 3.3 自动搜索人脸库 (1:N)
                       NSData *featureData = [[NSData alloc] initWithBase64EncodedString:featBase64 options:0];
                       NSDictionary *searchResult = [[ArcsoftEngineManager sharedInstance] faceDBSearchTop1:featureData threshold:scoreThreshold];
@@ -148,7 +159,6 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
                           if (faceIdNum) {
                               self.processedFaceIds[faceIdNum] = userId;
                               self.faceScores[faceIdNum] = score; // 缓存分数
-
                               [self.faceRetryCounts removeObjectForKey:faceIdNum];
                           }
                       } else {

@@ -54,7 +54,7 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
       boolean extractFeature = false;
       double scoreThreshold = 0.8; // 默认阈值
       int maxRetryCount = DEFAULT_MAX_RETRY_COUNT;
-
+      
       if (arguments != null) {
         if (arguments.containsKey("saveImage")) {
           Object val = arguments.get("saveImage");
@@ -119,11 +119,6 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
         if (extractFeature) {
             // 优化策略：检查是否已识别
             if (processedFaceIds.containsKey(faceId)) {
-                // 使用缓存的特征值
-                String cachedFeature = faceFeatures.get(faceId);
-                if (cachedFeature != null) {
-                    map.put("featureBase64", cachedFeature);
-                }
                 // 已识别，直接返回缓存的 userId
                 String userId = processedFaceIds.get(faceId);
                 if (userId != null && !userId.isEmpty()) {
@@ -131,7 +126,12 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
                     // 使用缓存的分数，如果没有则默认为 1.0
                     Double cachedScore = faceScores.get(faceId);
                     map.put("score", cachedScore != null ? cachedScore : 1.0);
-                    // Log.d(TAG, "Face " + faceId + " already recognized as " + userId + ", skipping extraction.");
+                    
+                    // 使用缓存的特征值
+                    String cachedFeature = faceFeatures.get(faceId);
+                    if (cachedFeature != null) {
+                        map.put("featureBase64", cachedFeature);
+                    }
                 }
             } else {
                 // 未识别或识别失败，检查重试次数
@@ -142,7 +142,10 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
                     if (feature != null && feature.getFeatureData() != null) {
                         String b64 = Base64.encodeToString(feature.getFeatureData(), Base64.NO_WRAP);
                         map.put("featureBase64", b64);
-                        faceFeatures.put(faceId, b64); // 缓存特征值
+                        
+                        // 只要提取成功，就更新特征缓存 (即使是陌生人)
+                        faceFeatures.put(faceId, b64);
+
                         // 自动搜索人脸库
                         SearchResult searchResult = engineManager.faceDBSearchTop1(b64);
                         if (searchResult != null && searchResult.getFaceFeatureInfo() != null) {
@@ -152,6 +155,7 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
                             if (tag != null && score >= scoreThreshold) {
                                 map.put("userId", tag);
                                 map.put("score", (double) score);
+
                                 // 识别成功，缓存状态
                                 processedFaceIds.put(faceId, tag);
                                 faceScores.put(faceId, (double) score); // 缓存分数
@@ -169,8 +173,12 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
                         faceRetryCounts.put(faceId, retryCount + 1);
                     }
                 } else {
-                    // 超过重试次数，不再尝试
-                    // Log.d(TAG, "Face " + faceId + " retry limit reached, skipping.");
+                    // 超过重试次数，不再尝试提取和搜索
+                    // 但如果之前有缓存的特征值，返回它 (方便注册陌生人)
+                    String cachedFeature = faceFeatures.get(faceId);
+                    if (cachedFeature != null) {
+                        map.put("featureBase64", cachedFeature);
+                    }
                 }
             }
         }
@@ -208,7 +216,17 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
       for (Integer id : toRemoveProcessed) {
           processedFaceIds.remove(id);
           faceScores.remove(id); // 同时移除分数缓存
-          faceFeatures.remove(id); // 同时移除特征缓存
+      }
+      
+      // 移除 faceFeatures 中不存在于 currentIds 的键
+      List<Integer> toRemoveFeatures = new ArrayList<>();
+      for (Integer id : faceFeatures.keySet()) {
+          if (!currentIds.contains(id)) {
+              toRemoveFeatures.add(id);
+          }
+      }
+      for (Integer id : toRemoveFeatures) {
+          faceFeatures.remove(id);
       }
 
       // 移除 faceRetryCounts 中不存在于 currentIds 的键
