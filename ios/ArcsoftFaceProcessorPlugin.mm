@@ -8,6 +8,7 @@
 // 优化策略：记录已处理的 faceId 和重试次数
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSString *> *processedFaceIds; // faceId -> userId
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *faceRetryCounts; // faceId -> retry count
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *faceScores; // faceId -> score
 @end
 
 @implementation ArcsoftFaceProcessorPlugin
@@ -19,6 +20,7 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
   if (self = [super initWithProxy:proxy withOptions:options]) {
     _processedFaceIds = [NSMutableDictionary dictionary];
     _faceRetryCounts = [NSMutableDictionary dictionary];
+    _faceScores = [NSMutableDictionary dictionary];
   }
   return self;
 }
@@ -91,7 +93,9 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
                   if (cachedUserId) {
                       // 已识别，直接使用缓存
                       faceMutable[@"userId"] = cachedUserId;
-                      faceMutable[@"score"] = @(1.0); // 或者缓存之前的分数
+                      // 使用缓存的分数，如果没有则默认为 1.0 (虽然通常会有)
+                      NSNumber *cachedScore = self.faceScores[faceIdNum];
+                      faceMutable[@"score"] = cachedScore ?: @(1.0);
                       needRecognition = NO;
                   } else {
                       // 检查重试次数
@@ -127,12 +131,14 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
 
                       if (searchResult) {
                           NSString *userId = searchResult[@"id"];
+                          NSNumber *score = searchResult[@"score"];
                           faceMutable[@"userId"] = userId;
-                          faceMutable[@"score"] = searchResult[@"score"];
+                          faceMutable[@"score"] = score;
 
                           // 识别成功，缓存状态
                           if (faceIdNum) {
                               self.processedFaceIds[faceIdNum] = userId;
+                              self.faceScores[faceIdNum] = score; // 缓存分数
                               [self.faceRetryCounts removeObjectForKey:faceIdNum];
                           }
                       } else {
@@ -191,6 +197,9 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
         }
     }
     [self.processedFaceIds removeObjectsForKeys:toRemoveProcessed];
+
+    // 移除 faceScores 中不存在于 currentIds 的键
+    [self.faceScores removeObjectsForKeys:toRemoveProcessed];
 
     // 移除 faceRetryCounts 中不存在于 currentIds 的键
     NSMutableArray *toRemoveRetry = [NSMutableArray array];

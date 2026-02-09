@@ -31,6 +31,7 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
   // 优化策略：记录已处理的 faceId 和重试次数
   private final Map<Integer, String> processedFaceIds = new ConcurrentHashMap<>(); // faceId -> userId (if recognized)
   private final Map<Integer, Integer> faceRetryCounts = new ConcurrentHashMap<>(); // faceId -> retry count
+  private final Map<Integer, Double> faceScores = new ConcurrentHashMap<>(); // faceId -> score
   private static final int DEFAULT_MAX_RETRY_COUNT = 5;
 
   public ArcsoftFaceProcessorPlugin(@NonNull VisionCameraProxy proxy, @Nullable Map<String, Object> options) {
@@ -121,7 +122,9 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
                 String userId = processedFaceIds.get(faceId);
                 if (userId != null && !userId.isEmpty()) {
                     map.put("userId", userId);
-                    map.put("score", 1.0); // 缓存结果，score 设为 1.0 或之前的 score
+                    // 使用缓存的分数，如果没有则默认为 1.0
+                    Double cachedScore = faceScores.get(faceId);
+                    map.put("score", cachedScore != null ? cachedScore : 1.0);
                     // Log.d(TAG, "Face " + faceId + " already recognized as " + userId + ", skipping extraction.");
                 }
             } else {
@@ -146,6 +149,7 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
 
                                 // 识别成功，缓存状态
                                 processedFaceIds.put(faceId, tag);
+                                faceScores.put(faceId, (double) score); // 缓存分数
                                 faceRetryCounts.remove(faceId);
                             } else {
                                 // 识别失败（分数低），增加重试计数
@@ -198,6 +202,7 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
       }
       for (Integer id : toRemoveProcessed) {
           processedFaceIds.remove(id);
+          faceScores.remove(id); // 同时移除分数缓存
       }
 
       // 移除 faceRetryCounts 中不存在于 currentIds 的键
