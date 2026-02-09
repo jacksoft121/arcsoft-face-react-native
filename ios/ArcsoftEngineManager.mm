@@ -636,6 +636,8 @@
             [self.engine removeFaceFeatureWithSearchId:[existingId intValue]];
             [self.userToSearchId removeObjectForKey:userId];
             [self.searchIdToUser removeObjectForKey:existingId];
+            // Clear cache
+            [self clearCache];
         }
 
         // New face in engine
@@ -657,6 +659,8 @@
             // 更新映射
             self.userToSearchId[userId] = @(searchId);
             self.searchIdToUser[@(searchId)] = userId;
+            // Clear cache
+            [self clearCache];
             return YES;
         }
 
@@ -785,101 +789,6 @@
         }
 
         return nil;
-    }
-}
-
-#pragma mark - Cache Management
-
-- (void)clearCache {
-    @synchronized (self) {
-        [self.processedFaceIds removeAllObjects];
-        [self.faceRetryCounts removeAllObjects];
-        [self.faceScores removeAllObjects];
-        [self.faceFeatures removeAllObjects];
-        NSLog(@"[ArcsoftEngineManager] Cache cleared");
-    }
-}
-
-- (BOOL)shouldProcessFace:(int)faceId maxRetryCount:(int)maxRetryCount {
-    @synchronized (self) {
-        if (self.processedFaceIds[@(faceId)]) {
-            return NO; // 已识别
-        }
-        int retryCount = [self.faceRetryCounts[@(faceId)] intValue];
-        return retryCount < maxRetryCount;
-    }
-}
-
-- (nullable NSDictionary *)getCachedFaceInfo:(int)faceId {
-    @synchronized (self) {
-        NSMutableDictionary *info = [NSMutableDictionary dictionary];
-        NSString *userId = self.processedFaceIds[@(faceId)];
-        if (userId) {
-            info[@"userId"] = userId;
-            NSNumber *score = self.faceScores[@(faceId)];
-            info[@"score"] = score ?: @(1.0);
-        }
-        NSString *feature = self.faceFeatures[@(faceId)];
-        if (feature) {
-            info[@"featureBase64"] = feature;
-        }
-        return info.count > 0 ? info : nil;
-    }
-}
-
-- (void)updateFaceCache:(int)faceId userId:(nullable NSString *)userId score:(float)score featureBase64:(nullable NSString *)featureBase64 {
-    @synchronized (self) {
-        if (userId) {
-            self.processedFaceIds[@(faceId)] = userId;
-            self.faceScores[@(faceId)] = @(score);
-            [self.faceRetryCounts removeObjectForKey:@(faceId)];
-        }
-        if (featureBase64) {
-            self.faceFeatures[@(faceId)] = featureBase64;
-        }
-    }
-}
-
-- (void)updateRetryCount:(int)faceId {
-    @synchronized (self) {
-        int count = [self.faceRetryCounts[@(faceId)] intValue];
-        self.faceRetryCounts[@(faceId)] = @(count + 1);
-    }
-}
-
-- (void)cleanUpFaceStates:(NSArray<NSDictionary *> *)currentFaces {
-    @synchronized (self) {
-        NSMutableSet<NSNumber *> *currentIds = [NSMutableSet set];
-        for (NSDictionary *face in currentFaces) {
-            NSNumber *fid = face[@"faceId"];
-            if (fid) {
-                [currentIds addObject:fid];
-            }
-        }
-
-        // 移除 processedFaceIds 中不存在于 currentIds 的键
-        NSMutableArray *toRemoveProcessed = [NSMutableArray array];
-        for (NSNumber *fid in self.processedFaceIds) {
-            if (![currentIds containsObject:fid]) {
-                [toRemoveProcessed addObject:fid];
-            }
-        }
-        [self.processedFaceIds removeObjectsForKeys:toRemoveProcessed];
-
-        // 移除 faceScores 中不存在于 currentIds 的键
-        [self.faceScores removeObjectsForKeys:toRemoveProcessed];
-
-        // 移除 faceFeatures 中不存在于 currentIds 的键
-        [self.faceFeatures removeObjectsForKeys:toRemoveProcessed];
-
-        // 移除 faceRetryCounts 中不存在于 currentIds 的键
-        NSMutableArray *toRemoveRetry = [NSMutableArray array];
-        for (NSNumber *fid in self.faceRetryCounts) {
-            if (![currentIds containsObject:fid]) {
-                [toRemoveRetry addObject:fid];
-            }
-        }
-        [self.faceRetryCounts removeObjectsForKeys:toRemoveRetry];
     }
 }
 

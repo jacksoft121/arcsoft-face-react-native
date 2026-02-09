@@ -623,6 +623,8 @@ public class ArcsoftEngineManager {
       // Let's try update.
       int code = engine.updateFaceFeature(new FaceFeatureInfo(existingId, bytes, tag));
       boolean ok = (code == ErrorInfo.MOK);
+      // 3. Clear cache
+      clearCache();
       d("faceDB update => ok=" + ok + ", code=" + code + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       return ok;
     }
@@ -632,6 +634,8 @@ public class ArcsoftEngineManager {
     int code = engine.registerFaceFeature(new FaceFeatureInfo(searchId, bytes, tag));
     if (code == ErrorInfo.MOK) {
       tagToSearchId.put(tag, searchId);
+      // 3. Clear cache
+      clearCache();
       d("faceDB add => ok=true, searchId=" + searchId + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       return true;
     }
@@ -657,10 +661,10 @@ public class ArcsoftEngineManager {
     if (id == null) return false;
     int code = engine.removeFaceFeature(id);
     boolean ok = (code == ErrorInfo.MOK);
-    
+
     // 3. Clear cache
     clearCache();
-    
+
     d("faceDBRemove => ok=" + ok + ", code=" + code);
     return ok;
   }
@@ -680,7 +684,7 @@ public class ArcsoftEngineManager {
       try { engine.removeFaceFeature(id); } catch (Throwable ignore) {}
     }
     tagToSearchId.clear();
-    
+
     // 3. Clear cache
     clearCache();
   }
