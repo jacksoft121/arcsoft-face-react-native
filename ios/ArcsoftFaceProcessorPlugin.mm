@@ -9,6 +9,7 @@
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSString *> *processedFaceIds; // faceId -> userId
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *faceRetryCounts; // faceId -> retry count
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *faceScores; // faceId -> score
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSString *> *faceFeatures; // faceId -> featureBase64
 @end
 
 @implementation ArcsoftFaceProcessorPlugin
@@ -21,6 +22,7 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
     _processedFaceIds = [NSMutableDictionary dictionary];
     _faceRetryCounts = [NSMutableDictionary dictionary];
     _faceScores = [NSMutableDictionary dictionary];
+    _faceFeatures = [NSMutableDictionary dictionary];
   }
   return self;
 }
@@ -96,6 +98,13 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
                       // 使用缓存的分数，如果没有则默认为 1.0 (虽然通常会有)
                       NSNumber *cachedScore = self.faceScores[faceIdNum];
                       faceMutable[@"score"] = cachedScore ?: @(1.0);
+
+                      // 使用缓存的特征值
+                      NSString *cachedFeature = self.faceFeatures[faceIdNum];
+                      if (cachedFeature) {
+                          faceMutable[@"featureBase64"] = cachedFeature;
+                      }
+
                       needRecognition = NO;
                   } else {
                       // 检查重试次数
@@ -124,7 +133,7 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
 
                   if (featBase64) {
                       faceMutable[@"featureBase64"] = featBase64;
-
+                      self.faceFeatures[faceIdNum] = featBase64; // 缓存特征值
                       // 3.3 自动搜索人脸库 (1:N)
                       NSData *featureData = [[NSData alloc] initWithBase64EncodedString:featBase64 options:0];
                       NSDictionary *searchResult = [[ArcsoftEngineManager sharedInstance] faceDBSearchTop1:featureData threshold:scoreThreshold];
@@ -139,6 +148,7 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
                           if (faceIdNum) {
                               self.processedFaceIds[faceIdNum] = userId;
                               self.faceScores[faceIdNum] = score; // 缓存分数
+
                               [self.faceRetryCounts removeObjectForKey:faceIdNum];
                           }
                       } else {
@@ -200,6 +210,9 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
 
     // 移除 faceScores 中不存在于 currentIds 的键
     [self.faceScores removeObjectsForKeys:toRemoveProcessed];
+
+    // 移除 faceFeatures 中不存在于 currentIds 的键
+    [self.faceFeatures removeObjectsForKeys:toRemoveProcessed];
 
     // 移除 faceRetryCounts 中不存在于 currentIds 的键
     NSMutableArray *toRemoveRetry = [NSMutableArray array];

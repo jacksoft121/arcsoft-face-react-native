@@ -365,6 +365,7 @@
         [out addObject:@{
           @"rect": @{ @"left": @(r.left), @"top": @(r.top), @"right": @(r.right), @"bottom": @(r.bottom) },
           @"orient": @(faces.faceOrient[i]),
+          @"faceId": @(faces.faceID[i]), // 返回 faceId
           @"faceDataInfo": faceData // 传递 faceDataInfo
         }];
       }

@@ -32,6 +32,7 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
   private final Map<Integer, String> processedFaceIds = new ConcurrentHashMap<>(); // faceId -> userId (if recognized)
   private final Map<Integer, Integer> faceRetryCounts = new ConcurrentHashMap<>(); // faceId -> retry count
   private final Map<Integer, Double> faceScores = new ConcurrentHashMap<>(); // faceId -> score
+  private final Map<Integer, String> faceFeatures = new ConcurrentHashMap<>(); // faceId -> featureBase64
   private static final int DEFAULT_MAX_RETRY_COUNT = 5;
 
   public ArcsoftFaceProcessorPlugin(@NonNull VisionCameraProxy proxy, @Nullable Map<String, Object> options) {
@@ -53,7 +54,7 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
       boolean extractFeature = false;
       double scoreThreshold = 0.8; // 默认阈值
       int maxRetryCount = DEFAULT_MAX_RETRY_COUNT;
-      
+
       if (arguments != null) {
         if (arguments.containsKey("saveImage")) {
           Object val = arguments.get("saveImage");
@@ -118,6 +119,11 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
         if (extractFeature) {
             // 优化策略：检查是否已识别
             if (processedFaceIds.containsKey(faceId)) {
+                // 使用缓存的特征值
+                String cachedFeature = faceFeatures.get(faceId);
+                if (cachedFeature != null) {
+                    map.put("featureBase64", cachedFeature);
+                }
                 // 已识别，直接返回缓存的 userId
                 String userId = processedFaceIds.get(faceId);
                 if (userId != null && !userId.isEmpty()) {
@@ -136,7 +142,7 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
                     if (feature != null && feature.getFeatureData() != null) {
                         String b64 = Base64.encodeToString(feature.getFeatureData(), Base64.NO_WRAP);
                         map.put("featureBase64", b64);
-
+                        faceFeatures.put(faceId, b64); // 缓存特征值
                         // 自动搜索人脸库
                         SearchResult searchResult = engineManager.faceDBSearchTop1(b64);
                         if (searchResult != null && searchResult.getFaceFeatureInfo() != null) {
@@ -146,7 +152,6 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
                             if (tag != null && score >= scoreThreshold) {
                                 map.put("userId", tag);
                                 map.put("score", (double) score);
-
                                 // 识别成功，缓存状态
                                 processedFaceIds.put(faceId, tag);
                                 faceScores.put(faceId, (double) score); // 缓存分数
@@ -203,6 +208,7 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
       for (Integer id : toRemoveProcessed) {
           processedFaceIds.remove(id);
           faceScores.remove(id); // 同时移除分数缓存
+          faceFeatures.remove(id); // 同时移除特征缓存
       }
 
       // 移除 faceRetryCounts 中不存在于 currentIds 的键
