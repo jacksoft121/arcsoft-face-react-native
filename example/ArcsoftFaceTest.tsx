@@ -245,6 +245,7 @@ export default function TestScreen() {
 
             // Only log if faces found or capturing to avoid spam
             if (faces.length > 0 || imagePath) {
+                setFeatureBase64Input(faces[0].featureBase64);
                 appendLog(`reportFacesToJS => faces:${JSON.stringify(faces[0])}`);
             }
 
