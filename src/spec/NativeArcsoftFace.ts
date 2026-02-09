@@ -98,7 +98,7 @@ export interface Spec {
   ): Promise<Array<{ roll: number; pitch: number; yaw: number }>>;
 
   /** 人脸库（JS 侧 id -> 原生侧特征映射） */
-  registerFaceFeature(id: string, feature: FaceFeature): Promise<boolean>;
+  registerFaceFeature(id: string, feature: FaceFeature): Promise<{ success: boolean; featureBase64?: string }>;
   removeFaceFeature(id: string): Promise<boolean>;
   clearAllFaceFeature(): Promise<void>;
   getFaceCount(): Promise<number>;

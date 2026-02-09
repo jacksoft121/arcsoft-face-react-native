@@ -615,32 +615,21 @@
     @synchronized (self) {
         if (!self.inited || !userId.length || !featureData.length) return NO;
 
-        // 1. Save to DB
-        [[FaceDB sharedInstance] addFace:userId feature:featureData];
-
-        // 2. Update Engine
-        // 检查是否已存在
+        // 1. Check if exists in DB
+        // Note: FaceDB is not directly accessible here, but we can check userToSearchId
         NSNumber *existingId = self.userToSearchId[userId];
         if (existingId) {
-            // Update in engine
-            // Note: ArcSoft SDK updateFaceFeature requires FaceFeatureInfo with ID.
-            // But if we just re-register, it might fail or duplicate if not handled.
-            // Actually, registerFaceFeature returns error if ID exists? No, ID is unique.
-            // Let's try update.
-            // int code = [self.engine updateFaceFeatureWithSearchId:[existingId intValue] feature:featureData];
-            // boolean ok = (code == MOK);
-            // d("faceDB update => ok=" + ok + ", code=" + code + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
-            // return ok;
-
-            // Fallback: remove and re-register
+            // Remove old face first
+            [[FaceDB sharedInstance] removeFace:userId];
             [self.engine removeFaceFeatureWithSearchId:[existingId intValue]];
             [self.userToSearchId removeObjectForKey:userId];
             [self.searchIdToUser removeObjectForKey:existingId];
-            // Clear cache
-            [self clearCache];
         }
 
-        // New face in engine
+        // 2. Save to DB
+        [[FaceDB sharedInstance] addFace:userId feature:featureData];
+
+        // 3. Add to Engine
         int searchId = self.nextSearchId++;
 
         // 构造注册信息

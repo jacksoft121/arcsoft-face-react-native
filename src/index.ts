@@ -201,7 +201,7 @@ export const getFace3DAngleImage = (
     ArcsoftFaceNative.getFace3DAngleImage(base64, faces);
 
 /** 人脸库 */
-export const registerFaceFeature = (id: string, feature: FaceFeature): Promise<boolean> =>
+export const registerFaceFeature = (id: string, feature: FaceFeature): Promise<{ success: boolean; featureBase64?: string }> =>
     ArcsoftFaceNative.registerFaceFeature(id, feature);
 
 export const removeFaceFeature = (id: string): Promise<boolean> => ArcsoftFaceNative.removeFaceFeature(id);
@@ -229,7 +229,7 @@ export const clearCache = (): Promise<boolean> => ArcsoftFaceNative.clearCache()
  * @param imageUrl 图片地址（支持 http/https 或 file://）
  * @returns 注册结果
  */
-export const registerFaceFromUrl = async (userId: string, imageUrl: string): Promise<{ success: boolean; msg: string; userId?: string }> => {
+export const registerFaceFromUrl = async (userId: string, imageUrl: string): Promise<{ success: boolean; msg: string; userId?: string; featureBase64?: string }> => {
     try {
         // 1. 下载或读取图片并转换为 Base64
         let base64 = '';
@@ -285,9 +285,9 @@ export const registerFaceFromUrl = async (userId: string, imageUrl: string): Pro
         }
 
         // 4. 注册/更新特征
-        const success = await registerFaceFeature(userId, feature);
-        if (success) {
-            return { success: true, msg: '注册成功', userId };
+        const result = await registerFaceFeature(userId, feature);
+        if (result.success) {
+            return { success: true, msg: '注册成功', userId, featureBase64: result.featureBase64 };
         } else {
             return { success: false, msg: '注册失败(引擎返回false)' };
         }

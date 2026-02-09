@@ -607,34 +607,29 @@ public class ArcsoftEngineManager {
 
     byte[] bytes = Base64.decode(featureBase64, Base64.DEFAULT);
 
-    // 1. Save to DB
+    // 1. Check if exists in DB
+    FaceEntity existingFace = faceDatabase.faceDao().getFaceByUserId(tag);
+    if (existingFace != null) {
+        // Remove old face first
+        faceDatabase.faceDao().deleteFaceByUserId(tag);
+        Integer oldSearchId = tagToSearchId.remove(tag);
+        if (oldSearchId != null) {
+            engine.removeFaceFeature(oldSearchId);
+        }
+    }
+
+    // 2. Save to DB
     FaceEntity entity = new FaceEntity(tag, bytes);
     // 更新注册时间
     entity.registerTime = System.currentTimeMillis();
     faceDatabase.faceDao().insertFace(entity);
 
-    // 2. Update Engine
-    Integer existingId = tagToSearchId.get(tag);
-    if (existingId != null) {
-      // Update in engine
-      // Note: ArcSoft SDK updateFaceFeature requires FaceFeatureInfo with ID.
-      // But if we just re-register, it might fail or duplicate if not handled.
-      // Actually, registerFaceFeature returns error if ID exists? No, ID is unique.
-      // Let's try update.
-      int code = engine.updateFaceFeature(new FaceFeatureInfo(existingId, bytes, tag));
-      boolean ok = (code == ErrorInfo.MOK);
-      // 3. Clear cache
-      clearCache();
-      d("faceDB update => ok=" + ok + ", code=" + code + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
-      return ok;
-    }
-
-    // New face in engine
+    // 3. Add to Engine
     int searchId = nextSearchId.getAndIncrement();
     int code = engine.registerFaceFeature(new FaceFeatureInfo(searchId, bytes, tag));
     if (code == ErrorInfo.MOK) {
       tagToSearchId.put(tag, searchId);
-      // 3. Clear cache
+      // 4. Clear cache
       clearCache();
       d("faceDB add => ok=true, searchId=" + searchId + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       return true;
