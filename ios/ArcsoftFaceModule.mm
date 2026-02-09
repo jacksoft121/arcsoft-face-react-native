@@ -609,41 +609,13 @@ RCT_EXPORT_METHOD(removeFaceFeature:(NSString *)userId
 
   BOOL success = [self.engineManager faceDBRemove:userId];
 
+  // 清除缓存
+  [self.engineManager clearCache];
+
   long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
   asf_logD(@"removeFaceFeature => ok=%d, cost=%lldms", success, cost);
 
   resolve(@(success));
-}
-
-/**
- * 搜索人脸 (1:N)
- */
-RCT_EXPORT_METHOD(searchFaceFeature:(NSDictionary *)feature
-                  threshold:(double)threshold
-                  resolve:(RCTPromiseResolveBlock)resolve
-                  reject:(RCTPromiseRejectBlock)reject)
-{
-  long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
-  asf_logD(@"searchFaceFeature(threshold=%f)", threshold);
-
-  NSData *d = DataFromBase64(feature[@"dataBase64"]);
-  if (!d) {
-    asf_logE(nil, @"searchFaceFeature failed: bad feature");
-    reject(@"BAD_FEATURE", @"feature.dataBase64 required", nil);
-    return;
-  }
-
-  NSDictionary *result = [self.engineManager faceDBSearchTop1:d threshold:(float)threshold];
-
-  long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
-
-  if (result) {
-      asf_logD(@"searchFaceFeature => id=%@, score=%@, cost=%lldms", result[@"id"], result[@"score"], cost);
-      resolve(result);
-  } else {
-      asf_logD(@"searchFaceFeature => null, cost=%lldms", cost);
-      resolve(@{ @"id": [NSNull null], @"score": @(0) });
-  }
 }
 
 /**
@@ -656,6 +628,9 @@ RCT_EXPORT_METHOD(clearAllFaceFeature:(RCTPromiseResolveBlock)resolve
   asf_logI(@"clearAllFaceFeature()");
 
   BOOL success = [self.engineManager faceDBClear];
+
+  // 清除缓存
+  [self.engineManager clearCache];
 
   long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
   asf_logD(@"clearAllFaceFeature => ok=%d, cost=%lldms", success, cost);
@@ -696,6 +671,53 @@ RCT_EXPORT_METHOD(getAllFaces:(NSString *)userId
   asf_logD(@"getAllFaces => count=%lu, cost=%lldms", (unsigned long)faces.count, cost);
 
   resolve(faces);
+}
+
+/**
+ * 搜索人脸 (1:N)
+ */
+RCT_EXPORT_METHOD(searchFaceFeature:(NSDictionary *)feature
+                  threshold:(double)threshold
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
+{
+  long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
+  asf_logD(@"searchFaceFeature(threshold=%f)", threshold);
+
+  NSData *d = DataFromBase64(feature[@"dataBase64"]);
+  if (!d) {
+    asf_logE(nil, @"searchFaceFeature failed: bad feature");
+    reject(@"BAD_FEATURE", @"feature.dataBase64 required", nil);
+    return;
+  }
+
+  NSDictionary *result = [self.engineManager faceDBSearchTop1:d threshold:(float)threshold];
+
+  long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
+
+  if (result) {
+      asf_logD(@"searchFaceFeature => id=%@, score=%@, cost=%lldms", result[@"id"], result[@"score"], cost);
+      resolve(result);
+  } else {
+      asf_logD(@"searchFaceFeature => null, cost=%lldms", cost);
+      resolve(@{ @"id": [NSNull null], @"score": @(0) });
+  }
+}
+
+/**
+ * 清除缓存 (暴露给 JS)
+ */
+RCT_EXPORT_METHOD(clearCache:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
+{
+  @try {
+    [self.engineManager clearCache];
+    asf_logD(@"clearCache called from JS");
+    resolve(@(YES));
+  } @catch (NSException *e) {
+    asf_logE(nil, @"clearCache failed: %@", e.reason);
+    reject(@"CLEAR_CACHE_FAILED", e.reason, nil);
+  }
 }
 
 @end

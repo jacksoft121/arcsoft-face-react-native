@@ -427,7 +427,7 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
   }
 
   // =========================
-  // Image (Base64 图片处理)
+  // Image (Base64)
   // =========================
 
   /**
@@ -610,6 +610,8 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     Log.d(TAG, "removeFaceFeature(id=" + id + ")");
     try {
       boolean ok = engineManager.faceDBRemove(id);
+      // 清除缓存
+      engineManager.clearCache();
       Log.d(TAG, "removeFaceFeature => ok=" + ok + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(ok);
     } catch (Throwable t) {
@@ -627,6 +629,8 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     Log.d(TAG, "clearAllFaceFeature()");
     try {
       engineManager.faceDBClear();
+      // 清除缓存
+      engineManager.clearCache();
       Log.d(TAG, "clearAllFaceFeature => ok, cost=" + (System.currentTimeMillis() - t0) + "ms");
       promise.resolve(null);
     } catch (Throwable t) {
@@ -709,6 +713,21 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
     } catch (Throwable t) {
       Log.e(TAG, "searchFaceFeature failed", t);
       promise.reject("searchFaceFeature_failed", t);
+    }
+  }
+
+  /**
+   * 清除缓存 (暴露给 JS)
+   */
+  @ReactMethod
+  public void clearCache(Promise promise) {
+    try {
+      engineManager.clearCache();
+      Log.d(TAG, "clearCache called from JS");
+      promise.resolve(true);
+    } catch (Throwable t) {
+      Log.e(TAG, "clearCache failed", t);
+      promise.reject("clearCache_failed", t);
     }
   }
 }

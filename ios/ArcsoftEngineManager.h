@@ -118,6 +118,28 @@ NS_ASSUME_NONNULL_BEGIN
 /// @return 结果字典 { "id": userId, "score": NSNumber }，未找到返回 nil
 - (NSDictionary * _Nullable)faceDBSearchTop1:(NSData *)featureData threshold:(float)threshold;
 
+// =========================
+// Cache Management (优化策略)
+// =========================
+
+/// 清空所有缓存
+- (void)clearCache;
+
+/// 判断是否需要处理该人脸
+- (BOOL)shouldProcessFace:(int)faceId maxRetryCount:(int)maxRetryCount;
+
+/// 获取缓存的人脸信息
+- (nullable NSDictionary *)getCachedFaceInfo:(int)faceId;
+
+/// 更新缓存
+- (void)updateFaceCache:(int)faceId userId:(nullable NSString *)userId score:(float)score featureBase64:(nullable NSString *)featureBase64;
+
+/// 增加重试计数
+- (void)updateRetryCount:(int)faceId;
+
+/// 清理不在画面中的人脸状态
+- (void)cleanUpFaceStates:(NSArray<NSDictionary *> *)currentFaces;
+
 @end
 
 NS_ASSUME_NONNULL_END

@@ -103,6 +103,13 @@ public class ArcsoftEngineManager {
   private final Map<String, Integer> tagToSearchId = new ConcurrentHashMap<>();
   private final AtomicInteger nextSearchId = new AtomicInteger(1);
 
+  // 优化策略缓存
+  private final Map<Integer, String> processedFaceIds = new ConcurrentHashMap<>(); // faceId -> userId (if recognized)
+  private final Map<Integer, Integer> faceRetryCounts = new ConcurrentHashMap<>(); // faceId -> retry count
+  private final Map<Integer, Double> faceScores = new ConcurrentHashMap<>(); // faceId -> score
+  private final Map<Integer, String> faceFeatures = new ConcurrentHashMap<>(); // faceId -> featureBase64
+  private static final int DEFAULT_MAX_RETRY_COUNT = 5;
+
   private ArcsoftEngineManager(Context appContext) {
     this.appContext = appContext;
     this.faceDatabase = FaceDatabase.getInstance(appContext);
@@ -111,6 +118,112 @@ public class ArcsoftEngineManager {
 
   public Context getContext() {
       return appContext;
+  }
+
+  /**
+   * 清空所有缓存
+   */
+  public synchronized void clearCache() {
+      processedFaceIds.clear();
+      faceRetryCounts.clear();
+      faceScores.clear();
+      faceFeatures.clear();
+      d("Cache cleared");
+  }
+
+  /**
+   * 判断是否需要处理该人脸
+   */
+  public boolean shouldProcessFace(int faceId, int maxRetryCount) {
+      if (processedFaceIds.containsKey(faceId)) {
+          return false; // 已识别，无需处理
+      }
+      int retryCount = faceRetryCounts.containsKey(faceId) ? faceRetryCounts.get(faceId) : 0;
+      return retryCount < maxRetryCount;
+  }
+
+  /**
+   * 获取缓存的人脸信息
+   */
+  public Map<String, Object> getCachedFaceInfo(int faceId) {
+      Map<String, Object> info = new java.util.HashMap<>();
+      String userId = processedFaceIds.get(faceId);
+      if (userId != null) {
+          info.put("userId", userId);
+          Double score = faceScores.get(faceId);
+          info.put("score", score != null ? score : 1.0);
+      }
+      String feature = faceFeatures.get(faceId);
+      if (feature != null) {
+          info.put("featureBase64", feature);
+      }
+      return info;
+  }
+
+  /**
+   * 更新缓存
+   */
+  public void updateFaceCache(int faceId, String userId, double score, String featureBase64) {
+      if (userId != null) {
+          processedFaceIds.put(faceId, userId);
+          faceScores.put(faceId, score);
+          faceRetryCounts.remove(faceId);
+      }
+      if (featureBase64 != null) {
+          faceFeatures.put(faceId, featureBase64);
+      }
+  }
+
+  /**
+   * 增加重试计数
+   */
+  public void updateRetryCount(int faceId) {
+      int count = faceRetryCounts.containsKey(faceId) ? faceRetryCounts.get(faceId) : 0;
+      faceRetryCounts.put(faceId, count + 1);
+  }
+
+  /**
+   * 清理不在画面中的人脸状态
+   */
+  public void cleanUpFaceStates(List<FaceInfo> currentFaces) {
+      List<Integer> currentIds = new ArrayList<>();
+      for (FaceInfo face : currentFaces) {
+          currentIds.add(face.getFaceId());
+      }
+
+      // 移除 processedFaceIds 中不存在于 currentIds 的键
+      List<Integer> toRemoveProcessed = new ArrayList<>();
+      for (Integer id : processedFaceIds.keySet()) {
+          if (!currentIds.contains(id)) {
+              toRemoveProcessed.add(id);
+          }
+      }
+      for (Integer id : toRemoveProcessed) {
+          processedFaceIds.remove(id);
+          faceScores.remove(id);
+      }
+
+      // 移除 faceFeatures 中不存在于 currentIds 的键
+      List<Integer> toRemoveFeatures = new ArrayList<>();
+      for (Integer id : faceFeatures.keySet()) {
+          if (!currentIds.contains(id)) {
+              toRemoveFeatures.add(id);
+          }
+      }
+      for (Integer id : toRemoveFeatures) {
+          faceFeatures.remove(id);
+      }
+
+      // 移除 faceRetryCounts 中不存在于 currentIds 的键
+      List<Integer> toRemoveRetry = new ArrayList<>();
+      for (Integer id : faceRetryCounts.keySet()) {
+          if (!currentIds.contains(id)) {
+              toRemoveRetry.add(id);
+          }
+      }
+      for (Integer id : toRemoveRetry) {
+          faceRetryCounts.remove(id);
+      }
   }
 
   /**
@@ -225,6 +338,7 @@ public class ArcsoftEngineManager {
     inited = false;
     engine = null;
     tagToSearchId.clear();
+    clearCache(); // Clear cache on uninit
     i("unInitEngine => code=" + code + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
     return code;
   }
@@ -543,6 +657,10 @@ public class ArcsoftEngineManager {
     if (id == null) return false;
     int code = engine.removeFaceFeature(id);
     boolean ok = (code == ErrorInfo.MOK);
+    
+    // 3. Clear cache
+    clearCache();
+    
     d("faceDBRemove => ok=" + ok + ", code=" + code);
     return ok;
   }
@@ -562,6 +680,9 @@ public class ArcsoftEngineManager {
       try { engine.removeFaceFeature(id); } catch (Throwable ignore) {}
     }
     tagToSearchId.clear();
+    
+    // 3. Clear cache
+    clearCache();
   }
 
   /**
@@ -577,7 +698,6 @@ public class ArcsoftEngineManager {
 
   /**
    * 获取所有人脸列表
-   * @param userId 可选的用户ID，如果提供则只返回该用户的数据
    * @return 包含 { "id": userId } 的列表
    */
   public synchronized List<Map<String, String>> faceDBGetAllFaces(String userId) {

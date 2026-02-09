@@ -22,17 +22,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
   private static final String TAG = "ArcsoftFacePlugin";
   private final ArcsoftEngineManager engineManager;
-
-  // 优化策略：记录已处理的 faceId 和重试次数
-  private final Map<Integer, String> processedFaceIds = new ConcurrentHashMap<>(); // faceId -> userId (if recognized)
-  private final Map<Integer, Integer> faceRetryCounts = new ConcurrentHashMap<>(); // faceId -> retry count
-  private final Map<Integer, Double> faceScores = new ConcurrentHashMap<>(); // faceId -> score
-  private final Map<Integer, String> faceFeatures = new ConcurrentHashMap<>(); // faceId -> featureBase64
   private static final int DEFAULT_MAX_RETRY_COUNT = 5;
 
   public ArcsoftFaceProcessorPlugin(@NonNull VisionCameraProxy proxy, @Nullable Map<String, Object> options) {
@@ -97,7 +90,7 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
       List<FaceInfo> faces = engineManager.detectFacesNV21(nv21, width, height);
 
       // 清理离开画面的人脸状态
-      cleanUpFaceStates(faces);
+      engineManager.cleanUpFaceStates(faces);
 
       // 5. 结果封装 & 特征提取
       List<Map<String, Object>> faceList = new ArrayList<>();
@@ -117,68 +110,45 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
         int faceId = face.getFaceId();
 
         if (extractFeature) {
-            // 优化策略：检查是否已识别
-            if (processedFaceIds.containsKey(faceId)) {
-                // 已识别，直接返回缓存的 userId
-                String userId = processedFaceIds.get(faceId);
-                if (userId != null && !userId.isEmpty()) {
-                    map.put("userId", userId);
-                    // 使用缓存的分数，如果没有则默认为 1.0
-                    Double cachedScore = faceScores.get(faceId);
-                    map.put("score", cachedScore != null ? cachedScore : 1.0);
-                    
-                    // 使用缓存的特征值
-                    String cachedFeature = faceFeatures.get(faceId);
-                    if (cachedFeature != null) {
-                        map.put("featureBase64", cachedFeature);
-                    }
+            // 优化策略：检查是否需要处理
+            if (!engineManager.shouldProcessFace(faceId, maxRetryCount)) {
+                // 不需要处理（已识别或重试超限），尝试获取缓存信息
+                Map<String, Object> cachedInfo = engineManager.getCachedFaceInfo(faceId);
+                if (cachedInfo != null) {
+                    map.putAll(cachedInfo);
                 }
             } else {
-                // 未识别或识别失败，检查重试次数
-                int retryCount = faceRetryCounts.containsKey(faceId) ? faceRetryCounts.get(faceId) : 0;
-
-                if (retryCount < maxRetryCount) {
-                    FaceFeature feature = engineManager.extractFeatureNV21(nv21, width, height, face);
-                    if (feature != null && feature.getFeatureData() != null) {
-                        String b64 = Base64.encodeToString(feature.getFeatureData(), Base64.NO_WRAP);
-                        map.put("featureBase64", b64);
-                        
-                        // 只要提取成功，就更新特征缓存 (即使是陌生人)
-                        faceFeatures.put(faceId, b64);
-
-                        // 自动搜索人脸库
-                        SearchResult searchResult = engineManager.faceDBSearchTop1(b64);
-                        if (searchResult != null && searchResult.getFaceFeatureInfo() != null) {
-                            String tag = searchResult.getFaceFeatureInfo().getFaceTag();
-                            float score = searchResult.getMaxSimilar();
-                            // 使用传入的阈值
-                            if (tag != null && score >= scoreThreshold) {
-                                map.put("userId", tag);
-                                map.put("score", (double) score);
-
-                                // 识别成功，缓存状态
-                                processedFaceIds.put(faceId, tag);
-                                faceScores.put(faceId, (double) score); // 缓存分数
-                                faceRetryCounts.remove(faceId);
-                            } else {
-                                // 识别失败（分数低），增加重试计数
-                                faceRetryCounts.put(faceId, retryCount + 1);
-                            }
+                // 需要处理
+                FaceFeature feature = engineManager.extractFeatureNV21(nv21, width, height, face);
+                if (feature != null && feature.getFeatureData() != null) {
+                    String b64 = Base64.encodeToString(feature.getFeatureData(), Base64.NO_WRAP);
+                    map.put("featureBase64", b64);
+                    
+                    // 自动搜索人脸库
+                    SearchResult searchResult = engineManager.faceDBSearchTop1(b64);
+                    if (searchResult != null && searchResult.getFaceFeatureInfo() != null) {
+                        String tag = searchResult.getFaceFeatureInfo().getFaceTag();
+                        float score = searchResult.getMaxSimilar();
+                        // 使用传入的阈值
+                        if (tag != null && score >= scoreThreshold) {
+                            map.put("userId", tag);
+                            map.put("score", (double) score);
+                            
+                            // 识别成功，更新缓存
+                            engineManager.updateFaceCache(faceId, tag, score, b64);
                         } else {
-                            // 搜索无结果，增加重试计数
-                            faceRetryCounts.put(faceId, retryCount + 1);
+                            // 识别失败（分数低），增加重试计数，但缓存特征值
+                            engineManager.updateRetryCount(faceId);
+                            engineManager.updateFaceCache(faceId, null, 0, b64);
                         }
                     } else {
-                        Log.w(TAG, "Feature extraction failed for faceId=" + faceId);
-                        faceRetryCounts.put(faceId, retryCount + 1);
+                        // 搜索无结果，增加重试计数，但缓存特征值
+                        engineManager.updateRetryCount(faceId);
+                        engineManager.updateFaceCache(faceId, null, 0, b64);
                     }
                 } else {
-                    // 超过重试次数，不再尝试提取和搜索
-                    // 但如果之前有缓存的特征值，返回它 (方便注册陌生人)
-                    String cachedFeature = faceFeatures.get(faceId);
-                    if (cachedFeature != null) {
-                        map.put("featureBase64", cachedFeature);
-                    }
+                    Log.w(TAG, "Feature extraction failed for faceId=" + faceId);
+                    engineManager.updateRetryCount(faceId);
                 }
             }
         }
@@ -197,48 +167,6 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
       Log.e(TAG, "Error processing frame", e);
       return null;
     }
-  }
-
-  // 清理不再画面中的人脸状态
-  private void cleanUpFaceStates(List<FaceInfo> currentFaces) {
-      List<Integer> currentIds = new ArrayList<>();
-      for (FaceInfo face : currentFaces) {
-          currentIds.add(face.getFaceId());
-      }
-
-      // 移除 processedFaceIds 中不存在于 currentIds 的键
-      List<Integer> toRemoveProcessed = new ArrayList<>();
-      for (Integer id : processedFaceIds.keySet()) {
-          if (!currentIds.contains(id)) {
-              toRemoveProcessed.add(id);
-          }
-      }
-      for (Integer id : toRemoveProcessed) {
-          processedFaceIds.remove(id);
-          faceScores.remove(id); // 同时移除分数缓存
-      }
-      
-      // 移除 faceFeatures 中不存在于 currentIds 的键
-      List<Integer> toRemoveFeatures = new ArrayList<>();
-      for (Integer id : faceFeatures.keySet()) {
-          if (!currentIds.contains(id)) {
-              toRemoveFeatures.add(id);
-          }
-      }
-      for (Integer id : toRemoveFeatures) {
-          faceFeatures.remove(id);
-      }
-
-      // 移除 faceRetryCounts 中不存在于 currentIds 的键
-      List<Integer> toRemoveRetry = new ArrayList<>();
-      for (Integer id : faceRetryCounts.keySet()) {
-          if (!currentIds.contains(id)) {
-              toRemoveRetry.add(id);
-          }
-      }
-      for (Integer id : toRemoveRetry) {
-          faceRetryCounts.remove(id);
-      }
   }
 
   private String saveFrame(Image image, byte[] nv21) {

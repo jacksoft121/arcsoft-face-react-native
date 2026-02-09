@@ -21,6 +21,7 @@ export interface DetectFacesOptions {
   saveImage?: boolean;
   extractFeature?: boolean;
   score?: number;
+  maxRetryCount?: number;
 }
 
 export function detectFaces(frame: Frame, options?: DetectFacesOptions): DetectFacesResult {
@@ -219,6 +220,9 @@ export const searchFaceFeature = (
 export const getAllFaces = (userId?: string): Promise<Array<{ id: string; userId: string; registerTime: number }>> =>
     ArcsoftFaceNative.getAllFaces(userId);
 
+/** 清除缓存 (优化策略) */
+export const clearCache = (): Promise<boolean> => ArcsoftFaceNative.clearCache();
+
 /**
  * 注册人脸（通过图片 URL）
  * @param userId 用户ID
@@ -327,6 +331,7 @@ const ArcsoftFace = {
 
   registerFaceFromUrl, // Export new function
   getAllFaces, // Export new function
+  clearCache, // Export new function
 
   // Frame Processor Plugin
   detectFaces,

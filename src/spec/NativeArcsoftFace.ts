@@ -110,6 +110,9 @@ export interface Spec {
   /** 获取所有人脸列表 (仅用于测试) */
   getAllFaces(userId?: string): Promise<Array<{ id: string; userId: string; registerTime: number }>>;
 
+  /** 清除缓存 (优化策略) */
+  clearCache(): Promise<boolean>;
+
   setLogLevel(level: number): Promise<boolean>;
 }
 
