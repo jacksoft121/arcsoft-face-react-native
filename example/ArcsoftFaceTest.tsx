@@ -98,6 +98,8 @@ export default function TestScreen() {
     const [imageBase64, setImageBase64] = useState('');
     const [userId, setUserId] = useState('u_001');
     const [imageUrl, setImageUrl] = useState('');
+
+    const [featureBase64Input, setFeatureBase64Input] = useState('');
     const [dbCount, setDbCount] = useState(0);
     const [lastFaceCount, setLastFaceCount] = useState(0);
     const [log, setLog] = useState<string>('');
@@ -243,7 +245,7 @@ export default function TestScreen() {
 
             // Only log if faces found or capturing to avoid spam
             if (faces.length > 0 || imagePath) {
-                // appendLog(`reportFacesToJS => faces:${JSON.stringify(faces[0])}`);
+                appendLog(`reportFacesToJS => faces:${JSON.stringify(faces[0])}`);
             }
 
             setLastFaceCount(faces.length);
@@ -368,10 +370,10 @@ export default function TestScreen() {
                 return;
             }
             const feature: FaceFeature = { dataBase64: face.featureBase64 };
-            const ok = await registerFaceFeature(userId, feature);
-            appendLog(`registerFaceFeature(${userId}) => ${ok}`);
+            const result = await registerFaceFeature(userId, feature);
+            appendLog(`registerFaceFeature(${userId}) => ${JSON.stringify(result)}`);
             refreshDBCount();
-            if (ok) Alert.alert('成功', '注册成功');
+            if (result.success) Alert.alert('成功', '注册成功');
             else Alert.alert('失败', '注册失败');
         } catch (e: any) {
             appendLog(`doRegisterToDB error: ${String(e?.message || e)}`);
@@ -399,6 +401,24 @@ export default function TestScreen() {
             Alert.alert('异常', String(e?.message || e));
         }
     }, [userId, imageUrl, appendLog, refreshDBCount]);
+
+    const doRegisterFromBase64 = useCallback(async () => {
+        if (!featureBase64Input) {
+            Alert.alert('提示', '请输入特征值 Base64');
+            return;
+        }
+        try {
+            const feature: FaceFeature = { dataBase64: featureBase64Input };
+            const result = await registerFaceFeature(userId, feature);
+            appendLog(`registerFaceFeature(Base64) => ${JSON.stringify(result)}`);
+            refreshDBCount();
+            if (result.success) Alert.alert('成功', '注册成功');
+            else Alert.alert('失败', '注册失败');
+        } catch (e: any) {
+            appendLog(`doRegisterFromBase64 error: ${String(e?.message || e)}`);
+            Alert.alert('异常', String(e?.message || e));
+        }
+    }, [userId, featureBase64Input, appendLog, refreshDBCount]);
 
     const doSearchDB = useCallback(async () => {
         if (!lastFaceRef.current) {
@@ -504,33 +524,7 @@ export default function TestScreen() {
 
         return `${year}-${month}-${day} ${hours}:${minutes}`;
     };
-    const renderFaceItem = ({item}: {item: FaceRecord}) => {
-        // Format timestamp to YYYY-MM-DD HH:mm:ss
-        const date = new Date(Number(item.registerTime));
 
-        // Check if date is valid
-        let formattedDate = "Invalid Date";
-        if (!isNaN(date.getTime())) {
-            formattedDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
-        }
-
-        return (
-            <View style={styles.faceItem}>
-                <View>
-                    <Text style={styles.faceId}>ID: {item.id} | User: {item.userId}</Text>
-                    <Text style={styles.faceTime}>
-                        {formattedDate}
-                    </Text>
-                </View>
-                <TouchableOpacity
-                    style={styles.deleteBtn}
-                    onPress={() => doRemoveFace(item.userId)}
-                >
-                    <Text style={styles.deleteBtnText}>删除</Text>
-                </TouchableOpacity>
-            </View>
-        );
-    };
 
     return (
         <SafeAreaView style={styles.root}>
@@ -696,6 +690,17 @@ export default function TestScreen() {
                                 multiline
                             />
                         </View>
+                        <View style={styles.row}>
+                            <Text style={styles.label}>特征Base64</Text>
+                            <TextInput
+                                value={featureBase64Input}
+                                onChangeText={setFeatureBase64Input}
+                                placeholder="特征值 Base64"
+                                style={styles.input}
+                                autoCapitalize="none"
+                                multiline
+                            />
+                        </View>
 
                         <Text style={styles.kv}>DB 数量：{dbCount}</Text>
                         <View style={styles.btnRow}>
@@ -704,6 +709,9 @@ export default function TestScreen() {
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.btn} onPress={doRegisterFromUrl}>
                                 <Text style={styles.btnText}>注册(URL)</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.btn} onPress={doRegisterFromBase64}>
+                                <Text style={styles.btnText}>注册(Base64)</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.btn} onPress={doSearchDB}>
                                 <Text style={styles.btnText}>检索</Text>

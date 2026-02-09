@@ -239,7 +239,7 @@ export const registerFaceFromUrl = async (userId: string, imageUrl: string, maxR
             if (attempt > 0) {
                 console.log(`[ArcsoftFace] registerFaceFromUrl retry attempt ${attempt}/${maxRetries}`);
                 // Optional: add a small delay before retry
-                await new Promise(resolve => setTimeout(resolve, 500));
+                await new Promise(resolve => setTimeout(() => resolve(undefined), 500));
             }
 
             // 1. 下载或读取图片并转换为 Base64
