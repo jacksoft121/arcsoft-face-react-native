@@ -617,7 +617,12 @@ RCT_EXPORT_METHOD(registerFaceFeature:(NSString *)userId
   long long cost = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0) - t0;
   asf_logD(@"registerFaceFeature => ok=%d, cost=%lldms", success, cost);
 
-  resolve(@(success));
+  NSMutableDictionary *result = [NSMutableDictionary dictionary];
+  result[@"success"] = @(success);
+  if (success) {
+      result[@"featureBase64"] = feature[@"dataBase64"];
+  }
+  resolve(result);
 }
 
 /**

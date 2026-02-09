@@ -594,7 +594,13 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
       String b64 = feature.getString("dataBase64");
       boolean ok = engineManager.faceDBAddOrUpdate(id, b64);
       Log.d(TAG, "registerFaceFeature => ok=" + ok + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
-      promise.resolve(ok);
+      
+      WritableMap result = Arguments.createMap();
+      result.putBoolean("success", ok);
+      if (ok) {
+          result.putString("featureBase64", b64);
+      }
+      promise.resolve(result);
     } catch (Throwable t) {
       Log.e(TAG, "registerFaceFeature failed", t);
       promise.reject("registerFaceFeature_failed", t);
