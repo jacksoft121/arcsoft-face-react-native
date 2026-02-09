@@ -124,7 +124,7 @@
                      maxFaceNum:(int)maxFaceNum
                    combinedMask:(int)combinedMask {
   @synchronized (self) {
-      NSLog(@"[ArcsoftEngineManager] initEngineWithDetectMode: mask=%d", combinedMask);
+      NSLog(@"[ArcsoftEngineManager] initEngineWithDetectMode: mode=%u, mask=%d", (unsigned int)detectMode, combinedMask);
       self.combinedMask = combinedMask;
       int code = [self.engine initFaceEngineWithDetectMode:detectMode
                                  orientPriority:orientPriority
@@ -475,7 +475,7 @@
         [out addObject:@{
           @"rect": @{ @"left": @(r.left), @"top": @(r.top), @"right": @(r.right), @"bottom": @(r.bottom) },
           @"orient": @(faces.faceOrient[i]),
-          @"faceId": @(faces.faceID[i]), // 返回 faceId
+          @"faceId": @(faces.faceID[i]), // 返回 faceId (Image模式下为-1，Video模式下有效)
           @"faceDataInfo": faceData // 传递 faceDataInfo
         }];
       }

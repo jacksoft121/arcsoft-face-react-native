@@ -183,13 +183,35 @@ RCT_EXPORT_METHOD(getActiveFileInfo:(RCTPromiseResolveBlock)resolve
 /**
  * 初始化引擎
  */
-RCT_EXPORT_METHOD(initEngine:(NSDictionary *)options
+RCT_EXPORT_METHOD(initEngine:(id)input
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject)
 {
   @try {
       long long t0 = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
-      asf_logI(@"initEngine start");
+      asf_logI(@"initEngine start. Input type: %@", NSStringFromClass([input class]));
+      asf_logD(@"initEngine input: %@", input);
+
+      NSDictionary *options = nil;
+      if ([input isKindOfClass:[NSDictionary class]]) {
+          options = (NSDictionary *)input;
+      } else if ([input isKindOfClass:[NSString class]]) {
+          NSString *jsonString = (NSString *)input;
+          NSData *data = [jsonString dataUsingEncoding:NSUTF8StringEncoding];
+          if (data) {
+              NSError *err = nil;
+              options = [NSJSONSerialization JSONObjectWithData:data options:0 error:&err];
+              if (err) {
+                  asf_logE(err, @"initEngine JSON parse error");
+              }
+          }
+      }
+
+      if (options) {
+          asf_logI(@"initEngine parsed options: %@", options);
+      } else {
+          asf_logW(@"initEngine options is nil after parsing");
+      }
 
       // 默认值
       ASF_DetectMode detectMode = ASF_DETECT_MODE_IMAGE;
@@ -204,10 +226,11 @@ RCT_EXPORT_METHOD(initEngine:(NSDictionary *)options
           // detectMode
           NSObject *mode = [options objectForKey:@"detectMode"];
           if (mode && [mode isKindOfClass:[NSString class]]) {
-              if ([(NSString *)mode isEqualToString:@"video"]) {
+              if ([(NSString *)mode caseInsensitiveCompare:@"video"] == NSOrderedSame) {
                   detectMode = ASF_DETECT_MODE_VIDEO;
               }
           }
+          asf_logI(@"initEngine detectMode: %u (req: %@)", (unsigned int)detectMode, mode);
 
           // orientPriority
           NSObject *orient = [options objectForKey:@"orientPriority"];
