@@ -45,6 +45,7 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
       // 1. 解析参数
       boolean saveImage = false;
       boolean extractFeature = false;
+      boolean retExtractFeatureBase64 = false; // 是否返回特征值 Base64
       double scoreThreshold = 0.8; // 默认阈值
       int maxRetryCount = DEFAULT_MAX_RETRY_COUNT;
       
@@ -58,6 +59,11 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
           Object val = arguments.get("extractFeature");
           if (val instanceof Boolean) extractFeature = (Boolean) val;
           else if (val instanceof String) extractFeature = Boolean.parseBoolean((String) val);
+        }
+        if (arguments.containsKey("retExtractFeatureBase64")) {
+          Object val = arguments.get("retExtractFeatureBase64");
+          if (val instanceof Boolean) retExtractFeatureBase64 = (Boolean) val;
+          else if (val instanceof String) retExtractFeatureBase64 = Boolean.parseBoolean((String) val);
         }
         if (arguments.containsKey("score")) {
             Object val = arguments.get("score");
@@ -122,7 +128,11 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
                 FaceFeature feature = engineManager.extractFeatureNV21(nv21, width, height, face);
                 if (feature != null && feature.getFeatureData() != null) {
                     String b64 = Base64.encodeToString(feature.getFeatureData(), Base64.NO_WRAP);
-                    map.put("featureBase64", b64);
+                    
+                    // 只有当 retExtractFeatureBase64 为 true 时，才将特征值返回给 JS
+                    if (retExtractFeatureBase64) {
+                        map.put("featureBase64", b64);
+                    }
                     
                     // 自动搜索人脸库
                     SearchResult searchResult = engineManager.faceDBSearchTop1(b64);
@@ -135,6 +145,7 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
                             map.put("score", (double) score);
                             
                             // 识别成功，更新缓存
+                            // 注意：缓存中始终保存 featureBase64，以便后续可能的用途，但返回给 JS 时受 retExtractFeatureBase64 控制
                             engineManager.updateFaceCache(faceId, tag, score, b64);
                         } else {
                             // 识别失败（分数低），增加重试计数，但缓存特征值
@@ -150,6 +161,11 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
                     Log.w(TAG, "Feature extraction failed for faceId=" + faceId);
                     engineManager.updateRetryCount(faceId);
                 }
+            }
+            
+            // 如果是从缓存中恢复的，也要检查是否需要移除 featureBase64
+            if (!retExtractFeatureBase64 && map.containsKey("featureBase64")) {
+                map.remove("featureBase64");
             }
         }
 

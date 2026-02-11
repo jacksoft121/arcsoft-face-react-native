@@ -41,12 +41,14 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
   // 1. 解析参数
   BOOL saveImage = NO;
   BOOL extractFeature = NO;
+  BOOL retExtractFeatureBase64 = NO; // 是否返回特征值 Base64
   double scoreThreshold = 0.8; // 默认相似度阈值
   int maxRetryCount = DEFAULT_MAX_RETRY_COUNT;
 
   if (arguments) {
       if (arguments[@"saveImage"]) saveImage = [arguments[@"saveImage"] boolValue];
       if (arguments[@"extractFeature"]) extractFeature = [arguments[@"extractFeature"] boolValue];
+      if (arguments[@"retExtractFeatureBase64"]) retExtractFeatureBase64 = [arguments[@"retExtractFeatureBase64"] boolValue];
       if (arguments[@"score"]) scoreThreshold = [arguments[@"score"] doubleValue];
       if (arguments[@"maxRetryCount"]) maxRetryCount = [arguments[@"maxRetryCount"] intValue];
   }
@@ -103,7 +105,10 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
                   NSString *featBase64 = [[ArcsoftEngineManager sharedInstance] extractFeature:offscreen faceRect:rect orient:orient faceDataInfo:faceDataInfo];
 
                   if (featBase64) {
-                      faceMutable[@"featureBase64"] = featBase64;
+                      // 只有当 retExtractFeatureBase64 为 true 时，才将特征值返回给 JS
+                      if (retExtractFeatureBase64) {
+                          faceMutable[@"featureBase64"] = featBase64;
+                      }
 
                       // 3.3 自动搜索人脸库 (1:N)
                       NSData *featureData = [[NSData alloc] initWithBase64EncodedString:featBase64 options:0];
@@ -116,6 +121,7 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
                           faceMutable[@"score"] = score;
 
                           // 识别成功，更新缓存
+                          // 注意：缓存中始终保存 featureBase64，以便后续可能的用途，但返回给 JS 时受 retExtractFeatureBase64 控制
                           [[ArcsoftEngineManager sharedInstance] updateFaceCache:faceId userId:userId score:[score floatValue] featureBase64:featBase64];
                       } else {
                           // 识别失败，增加重试计数，但缓存特征值
@@ -127,6 +133,11 @@ static int DEFAULT_MAX_RETRY_COUNT = 5;
                       // NSLog(@"[ArcsoftFace] Feature extraction failed");
                       [[ArcsoftEngineManager sharedInstance] updateRetryCount:faceId];
                   }
+              }
+
+              // 如果是从缓存中恢复的，也要检查是否需要移除 featureBase64
+              if (!retExtractFeatureBase64 && faceMutable[@"featureBase64"]) {
+                  [faceMutable removeObjectForKey:@"featureBase64"];
               }
           }
 
