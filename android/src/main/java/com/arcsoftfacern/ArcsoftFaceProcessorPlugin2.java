@@ -27,9 +27,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
+public class ArcsoftFaceProcessorPlugin2 extends FrameProcessorPlugin {
     private static final String TAG = "ArcsoftFacePlugin";
-    private static final int DEFAULT_MAX_RETRY_COUNT = 3;
+    private static final int DEFAULT_MAX_RETRY_COUNT = 5;
 
     private final ArcsoftEngineManager engineManager;
 
@@ -51,7 +51,7 @@ public class ArcsoftFaceProcessorPlugin extends FrameProcessorPlugin {
      */
     private final Object bufferLock = new Object();
 
-    public ArcsoftFaceProcessorPlugin(@NonNull VisionCameraProxy proxy, @Nullable Map<String, Object> options) {
+    public ArcsoftFaceProcessorPlugin2(@NonNull VisionCameraProxy proxy, @Nullable Map<String, Object> options) {
         super();
         this.engineManager = ArcsoftEngineManager.getInstance(null);
     }
