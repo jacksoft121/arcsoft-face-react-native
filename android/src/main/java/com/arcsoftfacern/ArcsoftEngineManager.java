@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * ArcSoft FaceEngine 生命周期管理与核心功能封装
@@ -95,9 +96,18 @@ public class ArcsoftEngineManager {
   }
 
   private final Context appContext;
-  private FaceEngine engine;
+  /**
+   * VIDEO 引擎负责连续帧/静态图检测与属性；识别引擎只负责特征提取和 1:N 搜索。
+   * ArcSoft 明确禁止同一引擎句柄并发调用同一算法，拆分后相机跟踪不会再被
+   * 特征提取和全库搜索阻塞。
+   */
+  private FaceEngine trackingEngine;
+  private FaceEngine recognitionEngine;
   private boolean inited = false;
   private FaceDatabase faceDatabase;
+  private final Object lifecycleLock = new Object();
+  private final Object trackingLock = new Object();
+  private final Object faceStateLock = new Object();
 
   // 人脸库映射: JS tag(String id) -> engine searchId (int)
   private final Map<String, Integer> tagToSearchId = new ConcurrentHashMap<>();
@@ -108,7 +118,31 @@ public class ArcsoftEngineManager {
   private final Map<Integer, Integer> faceRetryCounts = new ConcurrentHashMap<>(); // faceId -> retry count
   private final Map<Integer, Double> faceScores = new ConcurrentHashMap<>(); // faceId -> score
   private final Map<Integer, String> faceFeatures = new ConcurrentHashMap<>(); // faceId -> featureBase64
+  private final Map<Integer, Long> faceLastSeenAt = new ConcurrentHashMap<>();
+  private final Map<Integer, Long> faceLastAttemptAt = new ConcurrentHashMap<>();
+  private final Map<Integer, Long> faceRecognitionGenerations = new ConcurrentHashMap<>();
+  private final AtomicLong faceStateGeneration = new AtomicLong(1);
   private static final int DEFAULT_MAX_RETRY_COUNT = 5;
+  private static final long FACE_STATE_STALE_MS = 1500L;
+  // 官方 Demo 在特征失败后允许后续预览帧立即重试。保留一个很短的间隔，
+  // 既接近 Demo 的响应速度，也避免低质量人脸在 30 FPS 下连续占满识别线程。
+  private static final long FACE_RETRY_INTERVAL_MS = 120L;
+  // Demo 的 extractRetryCount 只限制单轮失败，之后会重新进入 TO_RETRY。
+  // 每轮之间留 500ms 冷却，保证远处人脸靠近后能恢复，又不持续跑满 1:N。
+  private static final long FACE_RETRY_BURST_COOLDOWN_MS = 500L;
+
+  /** 原生异步识别结果，避免 FrameProcessor 在 Kotlin 层来回编解码 Base64。 */
+  public static final class RecognitionResult {
+    public final String userId;
+    public final double score;
+    public final String featureBase64;
+
+    public RecognitionResult(String userId, double score, String featureBase64) {
+      this.userId = userId;
+      this.score = score;
+      this.featureBase64 = featureBase64;
+    }
+  }
 
   private ArcsoftEngineManager(Context appContext) {
     this.appContext = appContext;
@@ -123,11 +157,17 @@ public class ArcsoftEngineManager {
   /**
    * 清空所有缓存
    */
-  public synchronized void clearCache() {
+  public void clearCache() {
+    synchronized (faceStateLock) {
+      faceStateGeneration.incrementAndGet();
       processedFaceIds.clear();
       faceRetryCounts.clear();
       faceScores.clear();
       faceFeatures.clear();
+      faceLastSeenAt.clear();
+      faceLastAttemptAt.clear();
+      faceRecognitionGenerations.clear();
+    }
       d("Cache cleared");
   }
 
@@ -135,17 +175,20 @@ public class ArcsoftEngineManager {
    * 判断是否需要处理该人脸
    */
   public boolean shouldProcessFace(int faceId, int maxRetryCount) {
-      if (processedFaceIds.containsKey(faceId)) {
-          return false; // 已识别，无需处理
+      synchronized (faceStateLock) {
+        if (processedFaceIds.containsKey(faceId)) {
+            return false; // 已识别，无需处理
+        }
+        int retryCount = faceRetryCounts.containsKey(faceId) ? faceRetryCounts.get(faceId) : 0;
+        return retryCount < maxRetryCount;
       }
-      int retryCount = faceRetryCounts.containsKey(faceId) ? faceRetryCounts.get(faceId) : 0;
-      return retryCount < maxRetryCount;
   }
 
   /**
    * 获取缓存的人脸信息
    */
   public Map<String, Object> getCachedFaceInfo(int faceId) {
+    synchronized (faceStateLock) {
       Map<String, Object> info = new java.util.HashMap<>();
       String userId = processedFaceIds.get(faceId);
       if (userId != null) {
@@ -158,12 +201,14 @@ public class ArcsoftEngineManager {
           info.put("featureBase64", feature);
       }
       return info;
+    }
   }
 
   /**
    * 更新缓存
    */
   public void updateFaceCache(int faceId, String userId, double score, String featureBase64) {
+    synchronized (faceStateLock) {
       if (userId != null) {
           processedFaceIds.put(faceId, userId);
           faceScores.put(faceId, score);
@@ -172,58 +217,128 @@ public class ArcsoftEngineManager {
       if (featureBase64 != null) {
           faceFeatures.put(faceId, featureBase64);
       }
+    }
   }
 
   /**
    * 增加重试计数
    */
   public void updateRetryCount(int faceId) {
-      int count = faceRetryCounts.containsKey(faceId) ? faceRetryCounts.get(faceId) : 0;
-      faceRetryCounts.put(faceId, count + 1);
+      synchronized (faceStateLock) {
+        int count = faceRetryCounts.containsKey(faceId) ? faceRetryCounts.get(faceId) : 0;
+        faceRetryCounts.put(faceId, count + 1);
+      }
   }
 
   /**
-   * 清理不在画面中的人脸状态
+   * 标记当前帧 traceID 并延迟清理离开画面的人脸状态。
+   *
+   * 单帧空检测不能立即删除已命中的姓名，否则 ArcSoft 仍在追踪同一人时会在
+   * 绿框和红框之间闪烁；超过窗口后再次出现的同值 faceId 才按新目标处理。
    */
   public void cleanUpFaceStates(List<FaceInfo> currentFaces) {
-      List<Integer> currentIds = new ArrayList<>();
-      for (FaceInfo face : currentFaces) {
-          currentIds.add(face.getFaceId());
-      }
-
-      // 移除 processedFaceIds 中不存在于 currentIds 的键
-      List<Integer> toRemoveProcessed = new ArrayList<>();
-      for (Integer id : processedFaceIds.keySet()) {
-          if (!currentIds.contains(id)) {
-              toRemoveProcessed.add(id);
+      long now = System.currentTimeMillis();
+      synchronized (faceStateLock) {
+        for (FaceInfo face : currentFaces) {
+          int faceId = face.getFaceId();
+          Long previousSeenAt = faceLastSeenAt.get(faceId);
+          if (previousSeenAt != null && now - previousSeenAt > FACE_STATE_STALE_MS) {
+            clearFaceStateLocked(faceId);
           }
-      }
-      for (Integer id : toRemoveProcessed) {
-          processedFaceIds.remove(id);
-          faceScores.remove(id);
-      }
+          faceLastSeenAt.put(faceId, now);
+        }
 
-      // 移除 faceFeatures 中不存在于 currentIds 的键
-      List<Integer> toRemoveFeatures = new ArrayList<>();
-      for (Integer id : faceFeatures.keySet()) {
-          if (!currentIds.contains(id)) {
-              toRemoveFeatures.add(id);
+        List<Integer> staleIds = new ArrayList<>();
+        for (Map.Entry<Integer, Long> entry : faceLastSeenAt.entrySet()) {
+          if (now - entry.getValue() > FACE_STATE_STALE_MS) {
+            staleIds.add(entry.getKey());
           }
+        }
+        for (Integer faceId : staleIds) {
+          clearFaceStateLocked(faceId);
+        }
       }
-      for (Integer id : toRemoveFeatures) {
-          faceFeatures.remove(id);
-      }
+  }
 
-      // 移除 faceRetryCounts 中不存在于 currentIds 的键
-      List<Integer> toRemoveRetry = new ArrayList<>();
-      for (Integer id : faceRetryCounts.keySet()) {
-          if (!currentIds.contains(id)) {
-              toRemoveRetry.add(id);
-          }
+  /**
+   * 原子申请一次后台识别。返回负数表示已命中、正在处理或仍在重试冷却期。
+   * 返回值是缓存代次，异步任务完成时用它阻止旧任务污染新页面/新人脸状态。
+   */
+  public long tryBeginFaceRecognition(int faceId, int maxRetryCount) {
+    long now = System.currentTimeMillis();
+    synchronized (faceStateLock) {
+      if (processedFaceIds.containsKey(faceId)) return -1L;
+      int retryCount = faceRetryCounts.getOrDefault(faceId, 0);
+      if (faceRecognitionGenerations.containsKey(faceId)) return -1L;
+      long lastAttemptAt = faceLastAttemptAt.getOrDefault(faceId, 0L);
+      if (retryCount >= Math.max(1, maxRetryCount)) {
+        if (now - lastAttemptAt < FACE_RETRY_BURST_COOLDOWN_MS) return -1L;
+        // 对齐 Demo：一轮提取/搜索失败不是永久失败，清零后允许下一轮。
+        faceRetryCounts.put(faceId, 0);
       }
-      for (Integer id : toRemoveRetry) {
-          faceRetryCounts.remove(id);
+      if (now - lastAttemptAt < FACE_RETRY_INTERVAL_MS) return -1L;
+
+      long generation = faceStateGeneration.get();
+      faceLastAttemptAt.put(faceId, now);
+      faceRecognitionGenerations.put(faceId, generation);
+      return generation;
+    }
+  }
+
+  /** 完成后台识别并仅在 traceID/缓存代次仍有效时发布姓名。 */
+  public void completeFaceRecognition(
+      int faceId,
+      long generation,
+      RecognitionResult result
+  ) {
+    synchronized (faceStateLock) {
+      Long activeGeneration = faceRecognitionGenerations.remove(faceId);
+      if (
+          activeGeneration == null ||
+          activeGeneration != generation ||
+          generation != faceStateGeneration.get()
+      ) {
+        return;
       }
+      Long lastSeenAt = faceLastSeenAt.get(faceId);
+      if (
+          lastSeenAt == null ||
+          System.currentTimeMillis() - lastSeenAt > FACE_STATE_STALE_MS
+      ) {
+        clearFaceStateLocked(faceId);
+        return;
+      }
+      if (result != null && result.userId != null) {
+        processedFaceIds.put(faceId, result.userId);
+        faceScores.put(faceId, result.score);
+        faceRetryCounts.remove(faceId);
+        if (result.featureBase64 != null) {
+          faceFeatures.put(faceId, result.featureBase64);
+        }
+        return;
+      }
+      faceRetryCounts.put(faceId, faceRetryCounts.getOrDefault(faceId, 0) + 1);
+    }
+  }
+
+  /** 有界后台队列拒绝任务时撤销占位，允许后续有效帧重试。 */
+  public void cancelFaceRecognition(int faceId, long generation) {
+    synchronized (faceStateLock) {
+      Long activeGeneration = faceRecognitionGenerations.get(faceId);
+      if (activeGeneration != null && activeGeneration == generation) {
+        faceRecognitionGenerations.remove(faceId);
+      }
+    }
+  }
+
+  private void clearFaceStateLocked(int faceId) {
+    processedFaceIds.remove(faceId);
+    faceRetryCounts.remove(faceId);
+    faceScores.remove(faceId);
+    faceFeatures.remove(faceId);
+    faceLastSeenAt.remove(faceId);
+    faceLastAttemptAt.remove(faceId);
+    faceRecognitionGenerations.remove(faceId);
   }
 
   /**
@@ -274,35 +389,68 @@ public class ArcsoftEngineManager {
    * @param combinedMask 功能组合掩码
    * @return 错误码
    */
-  public synchronized int initEngine(
+  public int initEngine(
           DetectMode detectMode,
           DetectFaceOrientPriority orientPriority,
           int maxFaceNum,
           int combinedMask
   ) {
-    long t0 = System.currentTimeMillis();
-    d("initEngine(mode=" + detectMode + ", orient=" + orientPriority + ", maxFaceNum=" + maxFaceNum + ", mask=" + combinedMask + ")");
-    if (inited && engine != null) {
-      i("initEngine => already inited, return 0");
-      return 0;
-    }
+    synchronized (lifecycleLock) {
+      long t0 = System.currentTimeMillis();
+      d("initEngine(mode=" + detectMode + ", orient=" + orientPriority + ", maxFaceNum=" + maxFaceNum + ", mask=" + combinedMask + ")");
+      if (inited && trackingEngine != null && recognitionEngine != null) {
+        i("initEngine => already inited, return 0");
+        return 0;
+      }
 
-    engine = new FaceEngine();
-    int code = engine.init(appContext, detectMode, orientPriority, maxFaceNum, combinedMask);
-    inited = (code == ErrorInfo.MOK);
-    if (!inited) {
-      w("initEngine failed => code=" + code);
-      engine = null;
-    } else {
-      i("initEngine success => code=0, cost=" + (System.currentTimeMillis() - t0) + "ms");
-      // Load faces from DB
+      // VIDEO 引擎只保留跟踪及明确启用的属性；特征能力移到独立 IMAGE 引擎。
+      int trackingMask = (combinedMask | FaceEngine.ASF_FACE_DETECT)
+          & ~FaceEngine.ASF_FACE_RECOGNITION;
+      // 官方门禁方案的附加引擎只初始化识别能力，避免为第二个句柄重复加载
+      // 检测/属性模型；静态图检测和属性仍由 trackingEngine 串行执行。
+      int recognitionMask = FaceEngine.ASF_FACE_RECOGNITION;
+
+      trackingEngine = new FaceEngine();
+      int trackingCode = trackingEngine.init(
+          appContext,
+          DetectMode.ASF_DETECT_MODE_VIDEO,
+          orientPriority,
+          maxFaceNum,
+          trackingMask
+      );
+      if (trackingCode != ErrorInfo.MOK) {
+        w("trackingEngine init failed => code=" + trackingCode);
+        trackingEngine = null;
+        return trackingCode;
+      }
+
+      recognitionEngine = new FaceEngine();
+      int recognitionCode = recognitionEngine.init(
+          appContext,
+          DetectMode.ASF_DETECT_MODE_IMAGE,
+          orientPriority,
+          maxFaceNum,
+          recognitionMask
+      );
+      if (recognitionCode != ErrorInfo.MOK) {
+        w("recognitionEngine init failed => code=" + recognitionCode);
+        trackingEngine.unInit();
+        trackingEngine = null;
+        recognitionEngine = null;
+        return recognitionCode;
+      }
+
+      inited = true;
+      i("split engines initialized => cost=" + (System.currentTimeMillis() - t0) + "ms");
+      // 人脸库只注册到识别引擎，跟踪引擎不持有无用的 1:N 索引。
       loadFacesFromDB();
+      return ErrorInfo.MOK;
     }
-    return code;
   }
 
   private void loadFacesFromDB() {
-      if (!inited || engine == null) return;
+    synchronized (this) {
+      if (!inited || recognitionEngine == null) return;
       List<FaceEntity> faces = faceDatabase.faceDao().getAllFaces();
       tagToSearchId.clear();
       // Reset nextSearchId based on DB? Or just increment.
@@ -313,7 +461,7 @@ public class ArcsoftEngineManager {
       for (FaceEntity face : faces) {
           int searchId = nextSearchId.getAndIncrement();
           FaceFeatureInfo info = new FaceFeatureInfo(searchId, face.featureData, face.userId);
-          int code = engine.registerFaceFeature(info);
+          int code = recognitionEngine.registerFaceFeature(info);
           if (code == ErrorInfo.MOK) {
               tagToSearchId.put(face.userId, searchId);
           } else {
@@ -321,30 +469,42 @@ public class ArcsoftEngineManager {
           }
       }
       i("Loaded " + tagToSearchId.size() + " faces from DB");
+    }
   }
 
   /**
    * 销毁引擎
    * @return 错误码
    */
-  public synchronized int unInitEngine() {
-    long t0 = System.currentTimeMillis();
-    d("unInitEngine()");
-    if (!inited || engine == null) {
-      i("unInitEngine => not inited, return 0");
-      return 0;
+  public int unInitEngine() {
+    synchronized (lifecycleLock) {
+      long t0 = System.currentTimeMillis();
+      d("unInitEngine()");
+      if (!inited || trackingEngine == null || recognitionEngine == null) {
+        i("unInitEngine => not inited, return 0");
+        return 0;
+      }
+
+      // 固定先锁跟踪、再锁识别，避免释放时与后台识别交叉销毁句柄。
+      synchronized (trackingLock) {
+        synchronized (this) {
+          int trackingCode = trackingEngine.unInit();
+          int recognitionCode = recognitionEngine.unInit();
+          inited = false;
+          trackingEngine = null;
+          recognitionEngine = null;
+          tagToSearchId.clear();
+          clearCache();
+          int code = trackingCode != ErrorInfo.MOK ? trackingCode : recognitionCode;
+          i("unInitEngine => code=" + code + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+          return code;
+        }
+      }
     }
-    int code = engine.unInit();
-    inited = false;
-    engine = null;
-    tagToSearchId.clear();
-    clearCache(); // Clear cache on uninit
-    i("unInitEngine => code=" + code + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
-    return code;
   }
 
   private void ensureInited() {
-    if (!inited || engine == null) {
+    if (!inited || trackingEngine == null || recognitionEngine == null) {
       throw new IllegalStateException("FaceEngine not initialized");
     }
   }
@@ -360,18 +520,27 @@ public class ArcsoftEngineManager {
    * @param height 高
    * @return 检测到的人脸列表
    */
-  public synchronized List<FaceInfo> detectFacesNV21(byte[] nv21, int width, int height) {
-    ensureInited();
-    long t0 = System.currentTimeMillis();
-    v("detectFacesNV21(w=" + width + ", h=" + height + ", len=" + (nv21 == null ? 0 : nv21.length) + ")");
-    List<FaceInfo> faces = new ArrayList<>();
-    int code = engine.detectFaces(nv21, width, height, FaceEngine.CP_PAF_NV21, faces);
-    if (code != ErrorInfo.MOK) {
-      w("detectFacesNV21 failed => code=" + code);
-      faces.clear();
+  public List<FaceInfo> detectFacesNV21(byte[] nv21, int width, int height) {
+    synchronized (trackingLock) {
+      ensureInited();
+      long t0 = System.currentTimeMillis();
+      v("detectFacesNV21(w=" + width + ", h=" + height + ", len=" + (nv21 == null ? 0 : nv21.length) + ")");
+      List<FaceInfo> faces = new ArrayList<>();
+      int code = trackingEngine.detectFaces(nv21, width, height, FaceEngine.CP_PAF_NV21, faces);
+      if (code != ErrorInfo.MOK) {
+        // ArcSoft 在画面无人或人脸置信度不足时会返回这两个业务状态，
+        // 它们等价于空结果，不应按异常逐帧写日志拖慢相机线程。
+        if (
+            code != ErrorInfo.MERR_FSDK_FACEFEATURE_MISSFACE &&
+            code != ErrorInfo.MERR_FSDK_FACEFEATURE_NO_FACE
+        ) {
+          w("detectFacesNV21 failed => code=" + code);
+        }
+        faces.clear();
+      }
+      d("detectFacesNV21 => faces=" + faces.size() + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+      return faces;
     }
-    d("detectFacesNV21 => faces=" + faces.size() + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
-    return faces;
   }
 
   /**
@@ -382,34 +551,105 @@ public class ArcsoftEngineManager {
    * @param faceInfo 人脸信息
    * @return 提取到的特征，失败返回 null
    */
-  public synchronized FaceFeature extractFeatureNV21(byte[] nv21, int width, int height, FaceInfo faceInfo) {
+  public FaceFeature extractFeatureNV21(byte[] nv21, int width, int height, FaceInfo faceInfo) {
+    synchronized (this) {
+      ensureInited();
+      long t0 = System.currentTimeMillis();
+      v("extractFeatureNV21(w=" + width + ", h=" + height + ")");
+      FaceFeature feature = new FaceFeature();
+      int code = recognitionEngine.extractFaceFeature(
+          nv21,
+          width,
+          height,
+          FaceEngine.CP_PAF_NV21,
+          faceInfo,
+          feature
+      );
+      if (code != ErrorInfo.MOK) {
+        w("extractFeatureNV21 failed => code=" + code);
+        return null;
+      }
+      d("extractFeatureNV21 => ok, cost=" + (System.currentTimeMillis() - t0) + "ms");
+      return feature;
+    }
+  }
+
+  /**
+   * 在独立 IMAGE+识别引擎上完成一次“提特征 + SDK 内建 1:N Top1”。
+   *
+   * 调用方应放在有界后台队列；整个方法持有识别引擎锁，保证注册/删除人脸库
+   * 不会与搜索并发。除非 JS 明确需要，否则不生成 Base64 中间字符串。
+   */
+  public synchronized RecognitionResult recognizeFaceNV21(
+      byte[] nv21,
+      int width,
+      int height,
+      FaceInfo faceInfo,
+      double scoreThreshold,
+      boolean returnFeatureBase64
+  ) {
     ensureInited();
     long t0 = System.currentTimeMillis();
-    v("extractFeatureNV21(w=" + width + ", h=" + height + ")");
     FaceFeature feature = new FaceFeature();
-    int code = engine.extractFaceFeature(nv21, width, height, FaceEngine.CP_PAF_NV21, faceInfo, feature);
-    if (code != ErrorInfo.MOK) {
-      w("extractFeatureNV21 failed => code=" + code);
+    int extractCode = recognitionEngine.extractFaceFeature(
+        nv21,
+        width,
+        height,
+        FaceEngine.CP_PAF_NV21,
+        faceInfo,
+        feature
+    );
+    byte[] featureData = feature.getFeatureData();
+    if (extractCode != ErrorInfo.MOK || featureData == null) {
+      w("recognizeFaceNV21 extract failed => code=" + extractCode);
       return null;
     }
-    d("extractFeatureNV21 => ok, cost=" + (System.currentTimeMillis() - t0) + "ms");
-    return feature;
+
+    String featureBase64 = returnFeatureBase64
+        ? Base64.encodeToString(featureData, Base64.NO_WRAP)
+        : null;
+    try {
+      SearchResult result = recognitionEngine.searchFaceFeature(
+          feature,
+          CompareModel.LIFE_PHOTO
+      );
+      if (
+          result != null &&
+          result.getFaceFeatureInfo() != null &&
+          result.getFaceFeatureInfo().getFaceTag() != null &&
+          result.getMaxSimilar() >= scoreThreshold
+      ) {
+        d("recognizeFaceNV21 => matched, cost=" + (System.currentTimeMillis() - t0) + "ms");
+        return new RecognitionResult(
+            result.getFaceFeatureInfo().getFaceTag(),
+            result.getMaxSimilar(),
+            featureBase64
+        );
+      }
+      d("recognizeFaceNV21 => unmatched, cost=" + (System.currentTimeMillis() - t0) + "ms");
+      return new RecognitionResult(null, 0.0, featureBase64);
+    } catch (Throwable t) {
+      e("recognizeFaceNV21 search exception", t);
+      return null;
+    }
   }
 
   /**
    * NV21 属性检测（年龄、性别、活体等）
    */
-  public synchronized AttrResult processAttributes(byte[] nv21, int width, int height, List<FaceInfo> faces, int combinedMask) {
-    ensureInited();
-    long t0 = System.currentTimeMillis();
-    v("processAttributes(mask=" + combinedMask + ", faces=" + (faces == null ? 0 : faces.size()) + ")");
+  public AttrResult processAttributes(byte[] nv21, int width, int height, List<FaceInfo> faces, int combinedMask) {
+    synchronized (trackingLock) {
+      ensureInited();
+      long t0 = System.currentTimeMillis();
+      v("processAttributes(mask=" + combinedMask + ", faces=" + (faces == null ? 0 : faces.size()) + ")");
 
-    int code = engine.process(nv21, width, height, FaceEngine.CP_PAF_NV21, faces, combinedMask);
-    if (code != ErrorInfo.MOK) {
-      w("processAttributes.process failed => code=" + code);
-      return new AttrResult(new int[0], new int[0], new int[0], new float[0], new float[0], new float[0]);
+      int code = trackingEngine.process(nv21, width, height, FaceEngine.CP_PAF_NV21, faces, combinedMask);
+      if (code != ErrorInfo.MOK) {
+        w("processAttributes.process failed => code=" + code);
+        return new AttrResult(new int[0], new int[0], new int[0], new float[0], new float[0], new float[0]);
+      }
+      return getAttrResult(faces, trackingEngine);
     }
-    return getAttrResult(faces);
   }
 
   // =========================
@@ -444,72 +684,78 @@ public class ArcsoftEngineManager {
   /**
    * 图片人脸检测
    */
-  public synchronized List<FaceInfo> detectFacesImage(String base64) {
-    ensureInited();
-    long t0 = System.currentTimeMillis();
-    Object[] img = decodeImage(base64);
-    if (img == null) return new ArrayList<>();
+  public List<FaceInfo> detectFacesImage(String base64) {
+    synchronized (trackingLock) {
+      ensureInited();
+      long t0 = System.currentTimeMillis();
+      Object[] img = decodeImage(base64);
+      if (img == null) return new ArrayList<>();
 
-    byte[] bgr24 = (byte[]) img[0];
-    int width = (int) img[1];
-    int height = (int) img[2];
+      byte[] bgr24 = (byte[]) img[0];
+      int width = (int) img[1];
+      int height = (int) img[2];
 
-    v("detectFacesImage(w=" + width + ", h=" + height + ")");
-    List<FaceInfo> faces = new ArrayList<>();
-    int code = engine.detectFaces(bgr24, width, height, FaceEngine.CP_PAF_BGR24, faces);
-    if (code != ErrorInfo.MOK) {
-      w("detectFacesImage failed => code=" + code);
-      faces.clear();
+      v("detectFacesImage(w=" + width + ", h=" + height + ")");
+      List<FaceInfo> faces = new ArrayList<>();
+      int code = trackingEngine.detectFaces(bgr24, width, height, FaceEngine.CP_PAF_BGR24, faces);
+      if (code != ErrorInfo.MOK) {
+        w("detectFacesImage failed => code=" + code);
+        faces.clear();
+      }
+      d("detectFacesImage => faces=" + faces.size() + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
+      return faces;
     }
-    d("detectFacesImage => faces=" + faces.size() + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
-    return faces;
   }
 
   /**
    * 图片特征提取
    */
-  public synchronized FaceFeature extractFeatureImage(String base64, FaceInfo faceInfo) {
-    ensureInited();
-    long t0 = System.currentTimeMillis();
-    Object[] img = decodeImage(base64);
-    if (img == null) return null;
+  public FaceFeature extractFeatureImage(String base64, FaceInfo faceInfo) {
+    synchronized (this) {
+      ensureInited();
+      long t0 = System.currentTimeMillis();
+      Object[] img = decodeImage(base64);
+      if (img == null) return null;
 
-    byte[] bgr24 = (byte[]) img[0];
-    int width = (int) img[1];
-    int height = (int) img[2];
+      byte[] bgr24 = (byte[]) img[0];
+      int width = (int) img[1];
+      int height = (int) img[2];
 
-    v("extractFeatureImage(w=" + width + ", h=" + height + ")");
-    FaceFeature feature = new FaceFeature();
-    int code = engine.extractFaceFeature(bgr24, width, height, FaceEngine.CP_PAF_BGR24, faceInfo, feature);
-    if (code != ErrorInfo.MOK) {
-      w("extractFeatureImage failed => code=" + code);
-      return null;
+      v("extractFeatureImage(w=" + width + ", h=" + height + ")");
+      FaceFeature feature = new FaceFeature();
+      int code = recognitionEngine.extractFaceFeature(bgr24, width, height, FaceEngine.CP_PAF_BGR24, faceInfo, feature);
+      if (code != ErrorInfo.MOK) {
+        w("extractFeatureImage failed => code=" + code);
+        return null;
+      }
+      d("extractFeatureImage => ok, cost=" + (System.currentTimeMillis() - t0) + "ms");
+      return feature;
     }
-    d("extractFeatureImage => ok, cost=" + (System.currentTimeMillis() - t0) + "ms");
-    return feature;
   }
 
   /**
    * 图片属性检测
    */
-  public synchronized AttrResult processAttributesImage(String base64, List<FaceInfo> faces, int combinedMask) {
-    ensureInited();
-    long t0 = System.currentTimeMillis();
-    Object[] img = decodeImage(base64);
-    if (img == null) return new AttrResult(new int[0], new int[0], new int[0], new float[0], new float[0], new float[0]);
+  public AttrResult processAttributesImage(String base64, List<FaceInfo> faces, int combinedMask) {
+    synchronized (trackingLock) {
+      ensureInited();
+      long t0 = System.currentTimeMillis();
+      Object[] img = decodeImage(base64);
+      if (img == null) return new AttrResult(new int[0], new int[0], new int[0], new float[0], new float[0], new float[0]);
 
-    byte[] bgr24 = (byte[]) img[0];
-    int width = (int) img[1];
-    int height = (int) img[2];
+      byte[] bgr24 = (byte[]) img[0];
+      int width = (int) img[1];
+      int height = (int) img[2];
 
-    v("processAttributesImage(mask=" + combinedMask + ", faces=" + (faces == null ? 0 : faces.size()) + ")");
+      v("processAttributesImage(mask=" + combinedMask + ", faces=" + (faces == null ? 0 : faces.size()) + ")");
 
-    int code = engine.process(bgr24, width, height, FaceEngine.CP_PAF_BGR24, faces, combinedMask);
-    if (code != ErrorInfo.MOK) {
-      w("processAttributesImage.process failed => code=" + code);
-      return new AttrResult(new int[0], new int[0], new int[0], new float[0], new float[0], new float[0]);
+      int code = trackingEngine.process(bgr24, width, height, FaceEngine.CP_PAF_BGR24, faces, combinedMask);
+      if (code != ErrorInfo.MOK) {
+        w("processAttributesImage.process failed => code=" + code);
+        return new AttrResult(new int[0], new int[0], new int[0], new float[0], new float[0], new float[0]);
+      }
+      return getAttrResult(faces, trackingEngine);
     }
-    return getAttrResult(faces);
   }
 
   // =========================
@@ -517,10 +763,10 @@ public class ArcsoftEngineManager {
   // =========================
 
   // 获取属性检测结果
-  private AttrResult getAttrResult(List<FaceInfo> faces) {
+  private AttrResult getAttrResult(List<FaceInfo> faces, FaceEngine targetEngine) {
     // Age
     List<AgeInfo> ageInfos = new ArrayList<>();
-    int codeAge = engine.getAge(ageInfos);
+    int codeAge = targetEngine.getAge(ageInfos);
     if (codeAge != ErrorInfo.MOK) w("getAge failed => code=" + codeAge);
     int[] ages = new int[ageInfos.size()];
     for (int i = 0; i < ageInfos.size(); i++) {
@@ -529,7 +775,7 @@ public class ArcsoftEngineManager {
 
     // Gender
     List<GenderInfo> genderInfos = new ArrayList<>();
-    int codeGender = engine.getGender(genderInfos);
+    int codeGender = targetEngine.getGender(genderInfos);
     if (codeGender != ErrorInfo.MOK) w("getGender failed => code=" + codeGender);
     int[] genders = new int[genderInfos.size()];
     for (int i = 0; i < genderInfos.size(); i++) {
@@ -538,7 +784,7 @@ public class ArcsoftEngineManager {
 
     // Liveness
     List<LivenessInfo> livenessInfos = new ArrayList<>();
-    int codeLive = engine.getLiveness(livenessInfos);
+    int codeLive = targetEngine.getLiveness(livenessInfos);
     if (codeLive != ErrorInfo.MOK) w("getLiveness failed => code=" + codeLive);
     int[] liveness = new int[livenessInfos.size()];
     for (int i = 0; i < livenessInfos.size(); i++) {
@@ -570,7 +816,7 @@ public class ArcsoftEngineManager {
     long t0 = System.currentTimeMillis();
     v("compare(featureA, featureB)");
     FaceSimilar similar = new FaceSimilar();
-    int code = engine.compareFaceFeature(f1, f2, CompareModel.LIFE_PHOTO, similar);
+    int code = recognitionEngine.compareFaceFeature(f1, f2, CompareModel.LIFE_PHOTO, similar);
     if (code != ErrorInfo.MOK) {
       w("compare failed => code=" + code);
       return 0f;
@@ -614,7 +860,7 @@ public class ArcsoftEngineManager {
         faceDatabase.faceDao().deleteFaceByUserId(tag);
         Integer oldSearchId = tagToSearchId.remove(tag);
         if (oldSearchId != null) {
-            engine.removeFaceFeature(oldSearchId);
+            recognitionEngine.removeFaceFeature(oldSearchId);
         }
     }
 
@@ -626,7 +872,7 @@ public class ArcsoftEngineManager {
 
     // 3. Add to Engine
     int searchId = nextSearchId.getAndIncrement();
-    int code = engine.registerFaceFeature(new FaceFeatureInfo(searchId, bytes, tag));
+    int code = recognitionEngine.registerFaceFeature(new FaceFeatureInfo(searchId, bytes, tag));
     if (code == ErrorInfo.MOK) {
       tagToSearchId.put(tag, searchId);
       // 4. Clear cache
@@ -654,7 +900,7 @@ public class ArcsoftEngineManager {
     // 2. Remove from Engine
     Integer id = tagToSearchId.remove(tag);
     if (id == null) return false;
-    int code = engine.removeFaceFeature(id);
+    int code = recognitionEngine.removeFaceFeature(id);
     boolean ok = (code == ErrorInfo.MOK);
 
     // 3. Clear cache
@@ -676,7 +922,7 @@ public class ArcsoftEngineManager {
 
     // 2. Clear Engine
     for (Integer id : tagToSearchId.values()) {
-      try { engine.removeFaceFeature(id); } catch (Throwable ignore) {}
+      try { recognitionEngine.removeFaceFeature(id); } catch (Throwable ignore) {}
     }
     tagToSearchId.clear();
 
@@ -730,7 +976,7 @@ public class ArcsoftEngineManager {
     byte[] bytes = Base64.decode(featureBase64, Base64.DEFAULT);
     FaceFeature f = new FaceFeature(bytes);
     try {
-      SearchResult r = engine.searchFaceFeature(f, CompareModel.LIFE_PHOTO);
+      SearchResult r = recognitionEngine.searchFaceFeature(f, CompareModel.LIFE_PHOTO);
       d("faceDBSearchTop1 => got=" + (r != null) + ", cost=" + (System.currentTimeMillis() - t0) + "ms");
       return r;
     } catch (Throwable t) {

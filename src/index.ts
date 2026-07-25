@@ -1,37 +1,42 @@
-import { VisionCameraProxy, type Frame } from 'react-native-vision-camera';
+import type { Frame } from 'react-native-vision-camera';
 import { Platform } from 'react-native';
+import { NitroModules } from 'react-native-nitro-modules';
 import ArcsoftFaceNative, {
   type FaceRect,
   type FaceInfo,
   type FaceFeature,
   type ActiveFileInfo,
 } from './spec/NativeArcsoftFace';
+import type {
+  ArcsoftFrameDetector,
+  ArcsoftDetectFacesOptions,
+  ArcsoftDetectFacesResult,
+} from './spec/ArcsoftFrameDetector.nitro';
 
 export type { FaceRect, FaceInfo, FaceFeature, ActiveFileInfo };
 
-// Frame Processor Plugin
-const plugin = VisionCameraProxy.initFrameProcessorPlugin('detectFaces', {});
+export type DetectFacesResult = ArcsoftDetectFacesResult;
+export type DetectFacesOptions = ArcsoftDetectFacesOptions;
 
-export interface DetectFacesResult {
-  faces: FaceInfo[];
-  imagePath?: string;
-}
-
-export interface DetectFacesOptions {
-  saveImage?: boolean;
-  extractFeature?: boolean;
-  score?: number;
-  maxRetryCount?: number;
+let frameDetector: ArcsoftFrameDetector | null = null;
+if (Platform.OS === 'android' || Platform.OS === 'ios') {
+  try {
+    frameDetector =
+      NitroModules.createHybridObject<ArcsoftFrameDetector>(
+        'ArcsoftFrameDetector'
+      );
+  } catch (error) {
+    console.error('[ArcsoftFace] Failed to load ArcsoftFrameDetector', error);
+  }
 }
 
 export function detectFaces(frame: Frame, options?: DetectFacesOptions): DetectFacesResult {
   'worklet';
-  if (plugin == null) {
-      console.error("Failed to load Frame Processor Plugin 'detectFaces'!");
-      return { faces: [] };
+  if (frameDetector == null) {
+    console.error("Nitro HybridObject 'ArcsoftFrameDetector' is unavailable.");
+    return { faces: [] };
   }
-  // @ts-ignore
-  return plugin.call(frame, options) as DetectFacesResult;
+  return frameDetector.detectFaces(frame, options ?? {});
 }
 
 export type InitEngineOptions = {

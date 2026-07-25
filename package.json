@@ -2,6 +2,7 @@
   "name": "arcsoft-face-react-native",
   "version": "0.1.0",
   "source": "./src/index.tsx",
+  "react-native": "./src/index.ts",
   "main": "./lib/commonjs/index.js",
   "module": "./lib/module/index.js",
   "types": "./lib/typescript/index.d.ts",
@@ -31,12 +32,13 @@
     "clean": "rimraf lib",
     "prepack": "yarn clean && yarn build",
     "prepare": "bob build",
-    "codegen": "nitro-codegen"
+    "codegen": "nitrogen"
   },
   "peerDependencies": {
     "react": "*",
     "react-native": "*",
-    "react-native-vision-camera": ">=3.0.0"
+    "react-native-nitro-modules": ">=0.36.0",
+    "react-native-vision-camera": ">=5.0.0"
   },
   "devDependencies": {
     "@react-native-community/bob": "^0.17.1",
@@ -44,10 +46,10 @@
     "@types/react-native": "^0.73.0",
     "rimraf": "^6.1.2",
     "typescript": "^5.9.3",
-    "react-native-nitro-modules": "^0.20.0",
-    "nitro-codegen": "*",
+    "nitrogen": "^0.36.1",
+    "react-native-nitro-modules": "^0.36.1",
     "react-native-builder-bob": "^0.39.1",
-    "react-native-vision-camera": "^4.0.0"
+    "react-native-vision-camera": "^5.1.0"
   },
   "keywords": [
     "react-native",

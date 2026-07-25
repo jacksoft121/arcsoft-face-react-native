@@ -10,6 +10,8 @@
 @interface ArcsoftEngineManager ()
 @property(nonatomic, readwrite) BOOL inited;
 @property(nonatomic, strong, readwrite) ArcSoftFaceEngine *engine;
+/// IMAGE+识别引擎与 VIDEO 跟踪引擎分离，避免特征搜索阻塞相机框更新。
+@property(nonatomic, strong) ArcSoftFaceEngine *recognitionEngine;
 @property(nonatomic, assign) int combinedMask;
 @property(nonatomic, strong) NSArray<NSDictionary *> *lastFace3DAngles;
 @property(nonatomic, strong) NSArray<NSNumber *> *lastAges;
@@ -29,6 +31,16 @@
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *faceRetryCounts; // faceId -> retry count
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *faceScores; // faceId -> score
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSString *> *faceFeatures; // faceId -> featureBase64
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *faceLastSeenAt;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *faceLastAttemptAt;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *faceRecognitionGenerations;
+@property (nonatomic, strong) NSObject *faceStateLock;
+@property (nonatomic, assign) NSInteger faceStateGeneration;
+
+- (void)clearFaceStateLocked:(NSNumber *)faceId;
+- (NSArray<NSDictionary *> *)detectFaces:(ASVLOFFSCREEN *)offscreen
+                             usingEngine:(ArcSoftFaceEngine *)targetEngine
+                       processAttributes:(BOOL)processAttributes;
 
 @end
 
@@ -46,6 +58,7 @@
 - (instancetype)init {
   if (self = [super init]) {
     _engine = [[ArcSoftFaceEngine alloc] init];
+    _recognitionEngine = [[ArcSoftFaceEngine alloc] init];
     _inited = NO;
     _combinedMask = 0;
     _lastFace3DAngles = @[];
@@ -63,6 +76,11 @@
     _faceRetryCounts = [NSMutableDictionary dictionary];
     _faceScores = [NSMutableDictionary dictionary];
     _faceFeatures = [NSMutableDictionary dictionary];
+    _faceLastSeenAt = [NSMutableDictionary dictionary];
+    _faceLastAttemptAt = [NSMutableDictionary dictionary];
+    _faceRecognitionGenerations = [NSMutableDictionary dictionary];
+    _faceStateLock = [[NSObject alloc] init];
+    _faceStateGeneration = 1;
 
     NSLog(@"[ArcsoftEngineManager] init: engine=%@", _engine);
   }
@@ -124,20 +142,41 @@
                      maxFaceNum:(int)maxFaceNum
                    combinedMask:(int)combinedMask {
   @synchronized (self) {
-      NSLog(@"[ArcsoftEngineManager] initEngineWithDetectMode: mode=%u, mask=%d", (unsigned int)detectMode, combinedMask);
-      self.combinedMask = combinedMask;
-      int code = [self.engine initFaceEngineWithDetectMode:detectMode
-                                 orientPriority:orientPriority
-                                     maxFaceNum:maxFaceNum
-                                   combinedMask:combinedMask];
-      self.inited = (code == MOK);
-      NSLog(@"[ArcsoftEngineManager] initEngine result: %d", code);
-
       if (self.inited) {
-          [self loadFacesFromDB];
+          return MOK;
       }
 
-      return code;
+      NSLog(@"[ArcsoftEngineManager] init split engines: mode=%u, mask=%d", (unsigned int)detectMode, combinedMask);
+      int trackingMask = (combinedMask | ASF_FACE_DETECT) & ~ASF_FACERECOGNITION;
+      // 官方门禁方案的附加句柄仅加载识别能力，避免重复加载检测和属性模型。
+      int recognitionMask = ASF_FACERECOGNITION;
+      self.combinedMask = trackingMask;
+
+      // 相机预览固定使用 VIDEO 跟踪；VisionCamera 已物理旋转帧，所以保持单角度。
+      MRESULT trackingCode = [self.engine initFaceEngineWithDetectMode:ASF_DETECT_MODE_VIDEO
+                                                       orientPriority:orientPriority
+                                                           maxFaceNum:maxFaceNum
+                                                         combinedMask:trackingMask];
+      if (trackingCode != MOK) {
+          NSLog(@"[ArcsoftEngineManager] tracking engine init failed: %ld", (long)trackingCode);
+          return (int)trackingCode;
+      }
+
+      // 特征提取和 1:N 搜索使用独立 IMAGE 识别引擎。
+      MRESULT recognitionCode = [self.recognitionEngine initFaceEngineWithDetectMode:ASF_DETECT_MODE_IMAGE
+                                                                      orientPriority:orientPriority
+                                                                          maxFaceNum:maxFaceNum
+                                                                        combinedMask:recognitionMask];
+      if (recognitionCode != MOK) {
+          NSLog(@"[ArcsoftEngineManager] recognition engine init failed: %ld", (long)recognitionCode);
+          [self.engine unInitFaceEngine];
+          return (int)recognitionCode;
+      }
+
+      self.inited = YES;
+      [self loadFacesFromDB];
+      NSLog(@"[ArcsoftEngineManager] split engines initialized");
+      return MOK;
   }
 }
 
@@ -161,7 +200,7 @@
         info.feature = &featureStruct;
         info.tag = "";
 
-        MRESULT mr = [self.engine registerSingleFaceFeatureWithFeatureInfo:&info];
+        MRESULT mr = [self.recognitionEngine registerSingleFaceFeatureWithFeatureInfo:&info];
         if (mr == MOK) {
             self.userToSearchId[record.userId] = @(searchId);
             self.searchIdToUser[@(searchId)] = record.userId;
@@ -178,15 +217,18 @@
 - (void)uninit {
   @synchronized (self) {
       if (self.inited) {
-        [self.engine unInitFaceEngine];
-        self.inited = NO;
+        // 锁顺序固定为 VIDEO 后 IMAGE，等待正在处理的跟踪/识别调用结束。
+        @synchronized (self.engine) {
+          @synchronized (self.recognitionEngine) {
+            [self.engine unInitFaceEngine];
+            [self.recognitionEngine unInitFaceEngine];
+            self.inited = NO;
 
-        // Clear DB maps
-        [self.userToSearchId removeAllObjects];
-        [self.searchIdToUser removeAllObjects];
-
-        // Clear cache
-        [self clearCache];
+            [self.userToSearchId removeAllObjects];
+            [self.searchIdToUser removeAllObjects];
+            [self clearCache];
+          }
+        }
       }
   }
 }
@@ -194,17 +236,21 @@
 #pragma mark - Cache Management
 
 - (void)clearCache {
-    @synchronized (self) {
+    @synchronized (self.faceStateLock) {
+        self.faceStateGeneration += 1;
         [self.processedFaceIds removeAllObjects];
         [self.faceRetryCounts removeAllObjects];
         [self.faceScores removeAllObjects];
         [self.faceFeatures removeAllObjects];
+        [self.faceLastSeenAt removeAllObjects];
+        [self.faceLastAttemptAt removeAllObjects];
+        [self.faceRecognitionGenerations removeAllObjects];
         NSLog(@"[ArcsoftEngineManager] Cache cleared");
     }
 }
 
 - (BOOL)shouldProcessFace:(int)faceId maxRetryCount:(int)maxRetryCount {
-    @synchronized (self) {
+    @synchronized (self.faceStateLock) {
         if (self.processedFaceIds[@(faceId)]) {
             return NO; // 已识别
         }
@@ -214,7 +260,7 @@
 }
 
 - (nullable NSDictionary *)getCachedFaceInfo:(int)faceId {
-    @synchronized (self) {
+    @synchronized (self.faceStateLock) {
         NSMutableDictionary *info = [NSMutableDictionary dictionary];
         NSString *userId = self.processedFaceIds[@(faceId)];
         if (userId) {
@@ -231,7 +277,7 @@
 }
 
 - (void)updateFaceCache:(int)faceId userId:(nullable NSString *)userId score:(float)score featureBase64:(nullable NSString *)featureBase64 {
-    @synchronized (self) {
+    @synchronized (self.faceStateLock) {
         if (userId) {
             self.processedFaceIds[@(faceId)] = userId;
             self.faceScores[@(faceId)] = @(score);
@@ -244,46 +290,126 @@
 }
 
 - (void)updateRetryCount:(int)faceId {
-    @synchronized (self) {
+    @synchronized (self.faceStateLock) {
         int count = [self.faceRetryCounts[@(faceId)] intValue];
         self.faceRetryCounts[@(faceId)] = @(count + 1);
     }
 }
 
 - (void)cleanUpFaceStates:(NSArray<NSDictionary *> *)currentFaces {
-    @synchronized (self) {
-        NSMutableSet<NSNumber *> *currentIds = [NSMutableSet set];
+    static NSTimeInterval const faceStateStaleSeconds = 1.5;
+    NSTimeInterval now = NSDate.date.timeIntervalSince1970;
+    @synchronized (self.faceStateLock) {
         for (NSDictionary *face in currentFaces) {
             NSNumber *fid = face[@"faceId"];
             if (fid) {
-                [currentIds addObject:fid];
+                NSNumber *previousSeenAt = self.faceLastSeenAt[fid];
+                if (previousSeenAt && now - previousSeenAt.doubleValue > faceStateStaleSeconds) {
+                    [self clearFaceStateLocked:fid];
+                }
+                self.faceLastSeenAt[fid] = @(now);
             }
         }
 
-        // 移除 processedFaceIds 中不存在于 currentIds 的键
-        NSMutableArray *toRemoveProcessed = [NSMutableArray array];
-        for (NSNumber *fid in self.processedFaceIds) {
-            if (![currentIds containsObject:fid]) {
-                [toRemoveProcessed addObject:fid];
+        NSMutableArray<NSNumber *> *staleIds = [NSMutableArray array];
+        for (NSNumber *fid in self.faceLastSeenAt) {
+            if (now - self.faceLastSeenAt[fid].doubleValue > faceStateStaleSeconds) {
+                [staleIds addObject:fid];
             }
         }
-        [self.processedFaceIds removeObjectsForKeys:toRemoveProcessed];
-
-        // 移除 faceScores 中不存在于 currentIds 的键
-        [self.faceScores removeObjectsForKeys:toRemoveProcessed];
-
-        // 移除 faceFeatures 中不存在于 currentIds 的键
-        [self.faceFeatures removeObjectsForKeys:toRemoveProcessed];
-
-        // 移除 faceRetryCounts 中不存在于 currentIds 的键
-        NSMutableArray *toRemoveRetry = [NSMutableArray array];
-        for (NSNumber *fid in self.faceRetryCounts) {
-            if (![currentIds containsObject:fid]) {
-                [toRemoveRetry addObject:fid];
-            }
+        for (NSNumber *fid in staleIds) {
+            [self clearFaceStateLocked:fid];
         }
-        [self.faceRetryCounts removeObjectsForKeys:toRemoveRetry];
     }
+}
+
+- (NSInteger)tryBeginFaceRecognition:(int)faceId maxRetryCount:(int)maxRetryCount {
+    // 官方 Demo 会在后续预览帧直接重试；120 ms 兼顾移动人脸响应和失败限流。
+    static NSTimeInterval const retryIntervalSeconds = 0.12;
+    // Demo 的次数限制只作用于一轮提取失败；冷却后重新允许 TO_RETRY，
+    // 使远处人脸靠近时能恢复识别，同时避免未注册人脸持续跑满 1:N。
+    static NSTimeInterval const retryBurstCooldownSeconds = 0.5;
+    NSTimeInterval now = NSDate.date.timeIntervalSince1970;
+    NSNumber *key = @(faceId);
+    @synchronized (self.faceStateLock) {
+        if (self.processedFaceIds[key]) return -1;
+        if (self.faceRecognitionGenerations[key]) return -1;
+        NSTimeInterval lastAttemptAt = self.faceLastAttemptAt[key].doubleValue;
+        if (self.faceRetryCounts[key].integerValue >= MAX(1, maxRetryCount)) {
+            if (now - lastAttemptAt < retryBurstCooldownSeconds) return -1;
+            // 对齐 Demo：一轮失败后进入下一轮，而不是永久保留失败状态。
+            self.faceRetryCounts[key] = @0;
+        }
+        if (now - lastAttemptAt < retryIntervalSeconds) return -1;
+
+        NSInteger generation = self.faceStateGeneration;
+        self.faceLastAttemptAt[key] = @(now);
+        self.faceRecognitionGenerations[key] = @(generation);
+        return generation;
+    }
+}
+
+- (void)completeFaceRecognition:(int)faceId
+                     generation:(NSInteger)generation
+                          result:(nullable NSDictionary *)result {
+    static NSTimeInterval const faceStateStaleSeconds = 1.5;
+    NSNumber *key = @(faceId);
+    @synchronized (self.faceStateLock) {
+        NSNumber *activeGeneration = self.faceRecognitionGenerations[key];
+        [self.faceRecognitionGenerations removeObjectForKey:key];
+        if (
+            !activeGeneration ||
+            activeGeneration.integerValue != generation ||
+            generation != self.faceStateGeneration
+        ) {
+            return;
+        }
+
+        NSNumber *lastSeenAt = self.faceLastSeenAt[key];
+        if (
+            !lastSeenAt ||
+            NSDate.date.timeIntervalSince1970 - lastSeenAt.doubleValue > faceStateStaleSeconds
+        ) {
+            [self clearFaceStateLocked:key];
+            return;
+        }
+
+        NSString *userId = [result[@"id"] isKindOfClass:NSString.class] ? result[@"id"] : nil;
+        if (userId.length > 0) {
+            self.processedFaceIds[key] = userId;
+            self.faceScores[key] = result[@"score"] ?: @(1.0);
+            [self.faceRetryCounts removeObjectForKey:key];
+            NSString *featureBase64 = [result[@"featureBase64"] isKindOfClass:NSString.class]
+              ? result[@"featureBase64"]
+              : nil;
+            if (featureBase64.length > 0) {
+                self.faceFeatures[key] = featureBase64;
+            }
+            return;
+        }
+        self.faceRetryCounts[key] = @(self.faceRetryCounts[key].integerValue + 1);
+    }
+}
+
+- (void)cancelFaceRecognition:(int)faceId generation:(NSInteger)generation {
+    NSNumber *key = @(faceId);
+    @synchronized (self.faceStateLock) {
+        NSNumber *activeGeneration = self.faceRecognitionGenerations[key];
+        if (activeGeneration && activeGeneration.integerValue == generation) {
+            [self.faceRecognitionGenerations removeObjectForKey:key];
+        }
+    }
+}
+
+/** 仅在持有 faceStateLock 时调用。 */
+- (void)clearFaceStateLocked:(NSNumber *)faceId {
+    [self.processedFaceIds removeObjectForKey:faceId];
+    [self.faceRetryCounts removeObjectForKey:faceId];
+    [self.faceScores removeObjectForKey:faceId];
+    [self.faceFeatures removeObjectForKey:faceId];
+    [self.faceLastSeenAt removeObjectForKey:faceId];
+    [self.faceLastAttemptAt removeObjectForKey:faceId];
+    [self.faceRecognitionGenerations removeObjectForKey:faceId];
 }
 
 #pragma mark - Image Processing Helpers
@@ -437,31 +563,38 @@
  * 人脸检测 (视频流)
  */
 - (NSArray<NSDictionary *> *)detectFaces:(ASVLOFFSCREEN *)offscreen {
-  @synchronized (self) {
+  @synchronized (self.engine) {
+      return [self detectFaces:offscreen
+                   usingEngine:self.engine
+             processAttributes:YES];
+  }
+}
+
+/**
+ * 在指定引擎上检测并复制 ArcSoft 的 faceDataInfo。
+ * VIDEO 跟踪结果可异步交给识别引擎提特征；IMAGE 路径则使用高精度引擎。
+ */
+- (NSArray<NSDictionary *> *)detectFaces:(ASVLOFFSCREEN *)offscreen
+                             usingEngine:(ArcSoftFaceEngine *)targetEngine
+                       processAttributes:(BOOL)processAttributes {
       if (!self.inited || offscreen == NULL) {
-          // NSLog(@"[ArcsoftEngineManager] detectFaces: engine not inited or offscreen is NULL");
           return @[];
       }
 
       ASF_MultiFaceInfo faces = {0};
-      MRESULT result = [self.engine detectFacesWithWidth:offscreen->i32Width
-                                                  height:offscreen->i32Height
-                                                    data:offscreen->ppu8Plane[0]
-                                                  format:offscreen->u32PixelArrayFormat
-                                                 faceRes:&faces];
+      MRESULT result = [targetEngine detectFacesWithWidth:offscreen->i32Width
+                                                   height:offscreen->i32Height
+                                                     data:offscreen->ppu8Plane[0]
+                                                   format:offscreen->u32PixelArrayFormat
+                                                  faceRes:&faces];
 
       if (result != MOK) {
-          // NSLog(@"[ArcsoftEngineManager] detectFaces failed with code: %ld", (long)result);
           return @[];
       }
 
-      if (faces.faceNum == 0) {
-          // NSLog(@"[ArcsoftEngineManager] detectFaces: No faces detected");
-      } else {
-          // NSLog(@"[ArcsoftEngineManager] detectFaces: Detected %d faces", faces.faceNum);
+      if (processAttributes) {
+          [self processFaces:offscreen faces:&faces];
       }
-
-      [self processFaces:offscreen faces:&faces];
 
       NSMutableArray *out = [NSMutableArray arrayWithCapacity:faces.faceNum];
       for (int i = 0; i < faces.faceNum; i++) {
@@ -472,15 +605,27 @@
         ASF_FaceDataInfo dataInfo = faces.faceDataInfoList[i];
         NSData *faceData = [NSData dataWithBytes:dataInfo.data length:dataInfo.dataSize];
 
-        [out addObject:@{
+        NSMutableDictionary *faceResult = [@{
           @"rect": @{ @"left": @(r.left), @"top": @(r.top), @"right": @(r.right), @"bottom": @(r.bottom) },
           @"orient": @(faces.faceOrient[i]),
           @"faceId": @(faces.faceID[i]), // 返回 faceId (Image模式下为-1，Video模式下有效)
           @"faceDataInfo": faceData // 传递 faceDataInfo
-        }];
+        } mutableCopy];
+        // ArcSoft VIDEO 检测结果自身携带 3D 姿态，不额外执行属性模型。
+        // 指针缺失时不伪造 0 度，交给上层明确阻止注册。
+        if (faces.face3DAngleInfo.yaw &&
+            faces.face3DAngleInfo.pitch &&
+            faces.face3DAngleInfo.roll) {
+          faceResult[@"angle"] = @{
+            @"yaw": @(faces.face3DAngleInfo.yaw[i]),
+            @"pitch": @(faces.face3DAngleInfo.pitch[i]),
+            @"roll": @(faces.face3DAngleInfo.roll[i]),
+            @"valid": @YES
+          };
+        }
+        [out addObject:faceResult];
       }
       return out;
-  }
 }
 
 /**
@@ -497,7 +642,13 @@
     ASVLOFFSCREEN offscreen = [self offscreenFromImage:image];
     // NSLog(@"[ArcsoftEngineManager] detectFacesFromImage: offscreen created. width=%d, height=%d, format=0x%x", offscreen.i32Width, offscreen.i32Height, offscreen.u32PixelArrayFormat);
 
-    NSArray<NSDictionary *> *faces = [self detectFaces:&offscreen];
+    NSArray<NSDictionary *> *faces;
+    // 静态图检测仍复用检测引擎；只有特征提取和检索进入识别引擎。
+    @synchronized (self.engine) {
+        faces = [self detectFaces:&offscreen
+                      usingEngine:self.engine
+                processAttributes:NO];
+    }
     // NSLog(@"[ArcsoftEngineManager] detectFacesFromImage: detected %lu faces", (unsigned long)faces.count);
 
     [self freeOffscreen:&offscreen];
@@ -511,7 +662,7 @@
                     faceRect:(MRECT)rect
                       orient:(int)orient
                 faceDataInfo:(NSData *)faceDataInfo {
-  @synchronized (self) {
+  @synchronized (self.recognitionEngine) {
       if (!self.inited || offscreen == NULL) return nil;
 
       // 确保 rect 4字节对齐
@@ -532,12 +683,12 @@
       }
 
       ASF_FaceFeature feature = {0};
-      MRESULT result = [self.engine extractFaceFeatureWithWidth:offscreen->i32Width
-                                                         height:offscreen->i32Height
-                                                           data:offscreen->ppu8Plane[0]
-                                                         format:offscreen->u32PixelArrayFormat
-                                                       faceInfo:&info
-                                                        feature:&feature];
+      MRESULT result = [self.recognitionEngine extractFaceFeatureWithWidth:offscreen->i32Width
+                                                                     height:offscreen->i32Height
+                                                                       data:offscreen->ppu8Plane[0]
+                                                                     format:offscreen->u32PixelArrayFormat
+                                                                   faceInfo:&info
+                                                                    feature:&feature];
 
       if (result != MOK) {
           NSLog(@"[ArcsoftEngineManager] extractFaceFeature failed: %ld", (long)result);
@@ -550,6 +701,66 @@
 
       NSData *data = [NSData dataWithBytes:feature.feature length:(NSUInteger)feature.featureSize];
       return [data base64EncodedStringWithOptions:0];
+  }
+}
+
+- (nullable NSDictionary *)recognizeFace:(ASVLOFFSCREEN *)offscreen
+                                faceRect:(MRECT)rect
+                                  orient:(int)orient
+                            faceDataInfo:(nullable NSData *)faceDataInfo
+                               threshold:(float)threshold
+                     returnFeatureBase64:(BOOL)returnFeatureBase64 {
+  @synchronized (self.recognitionEngine) {
+      if (!self.inited || offscreen == NULL) return nil;
+
+      MRECT alignedRect = rect;
+      alignedRect.left = (alignedRect.left / 4) * 4;
+      alignedRect.top = (alignedRect.top / 4) * 4;
+      alignedRect.right = (alignedRect.right / 4) * 4;
+      alignedRect.bottom = (alignedRect.bottom / 4) * 4;
+
+      ASF_SingleFaceInfo info = {0};
+      info.faceRect = alignedRect;
+      info.faceOrient = orient;
+      if (faceDataInfo.length > 0) {
+          info.faceDataInfo.data = (MByte *)faceDataInfo.bytes;
+          info.faceDataInfo.dataSize = (MInt32)faceDataInfo.length;
+      }
+
+      ASF_FaceFeature feature = {0};
+      MRESULT extractResult = [self.recognitionEngine extractFaceFeatureWithWidth:offscreen->i32Width
+                                                                            height:offscreen->i32Height
+                                                                              data:offscreen->ppu8Plane[0]
+                                                                            format:offscreen->u32PixelArrayFormat
+                                                                          faceInfo:&info
+                                                                           feature:&feature];
+      if (extractResult != MOK || feature.feature == NULL || feature.featureSize <= 0) {
+          return nil;
+      }
+
+      ASF_FaceFeatureInfo resultInfo = {0};
+      MFloat confidence = 0.0f;
+      MRESULT searchResult = [self.recognitionEngine searchFaceFeatureWithFeature:&feature
+                                                                      compareModel:ASF_LIFE_PHOTO
+                                                                        similarity:&confidence
+                                                                   faceFeatureInfo:&resultInfo];
+      if (searchResult != MOK || confidence < threshold) {
+          return nil;
+      }
+
+      NSString *userId = self.searchIdToUser[@(resultInfo.searchId)];
+      if (userId.length == 0) return nil;
+
+      NSMutableDictionary *result = [@{
+          @"id": userId,
+          @"score": @(confidence)
+      } mutableCopy];
+      if (returnFeatureBase64) {
+          NSData *featureData = [NSData dataWithBytes:feature.feature
+                                               length:(NSUInteger)feature.featureSize];
+          result[@"featureBase64"] = [featureData base64EncodedStringWithOptions:0];
+      }
+      return result;
   }
 }
 
@@ -582,7 +793,7 @@
  * 特征比对
  */
 - (float)compareFeature1:(NSData *)f1 feature2:(NSData *)f2 {
-  @synchronized (self) {
+  @synchronized (self.recognitionEngine) {
       if (!self.inited || !f1 || !f2) return 0.f;
 
       ASF_FaceFeature ff1 = {0};
@@ -594,7 +805,7 @@
       ff2.feature = (MByte *)f2.bytes;
 
       MFloat confidenceLevel = 0.0;
-      [self.engine compareFaceWithFeature:&ff1 feature2:&ff2 confidenceLevel:&confidenceLevel];
+      [self.recognitionEngine compareFaceWithFeature:&ff1 feature2:&ff2 confidenceLevel:&confidenceLevel];
       return confidenceLevel;
   }
 }
@@ -612,7 +823,7 @@
  * 注册/更新人脸特征
  */
 - (BOOL)faceDBAddOrUpdate:(NSString *)userId featureData:(NSData *)featureData {
-    @synchronized (self) {
+    @synchronized (self.recognitionEngine) {
         if (!self.inited || !userId.length || !featureData.length) return NO;
 
         // 1. Check if exists in DB
@@ -621,7 +832,7 @@
         if (existingId) {
             // Remove old face first
             [[FaceDB sharedInstance] removeFace:userId];
-            [self.engine removeFaceFeatureWithSearchId:[existingId intValue]];
+            [self.recognitionEngine removeFaceFeatureWithSearchId:[existingId intValue]];
             [self.userToSearchId removeObjectForKey:userId];
             [self.searchIdToUser removeObjectForKey:existingId];
         }
@@ -643,7 +854,7 @@
         info.tag = "";
 
         // 调用引擎注册
-        MRESULT mr = [self.engine registerSingleFaceFeatureWithFeatureInfo:&info];
+        MRESULT mr = [self.recognitionEngine registerSingleFaceFeatureWithFeatureInfo:&info];
         if (mr == MOK) {
             // 更新映射
             self.userToSearchId[userId] = @(searchId);
@@ -661,7 +872,7 @@
  * 移除人脸特征
  */
 - (BOOL)faceDBRemove:(NSString *)userId {
-    @synchronized (self) {
+    @synchronized (self.recognitionEngine) {
         if (!self.inited || !userId.length) return NO;
 
         // 1. Remove from DB
@@ -671,7 +882,7 @@
         NSNumber *searchId = self.userToSearchId[userId];
         if (!searchId) return NO;
 
-        MRESULT mr = [self.engine removeFaceFeatureWithSearchId:[searchId intValue]];
+        MRESULT mr = [self.recognitionEngine removeFaceFeatureWithSearchId:[searchId intValue]];
 
         // 无论引擎返回成功与否，都清理本地映射
         [self.userToSearchId removeObjectForKey:userId];
@@ -688,14 +899,14 @@
  * 清空人脸库
  */
 - (BOOL)faceDBClear {
-    @synchronized (self) {
+    @synchronized (self.recognitionEngine) {
         if (!self.inited) return NO;
 
         // 1. Clear DB
         [[FaceDB sharedInstance] clearAll];
 
         // 2. Clear Engine
-        MRESULT mr = [self.engine clearAllFaceFeature];
+        MRESULT mr = [self.recognitionEngine clearAllFaceFeature];
 
         [self.userToSearchId removeAllObjects];
         [self.searchIdToUser removeAllObjects];
@@ -750,7 +961,7 @@
  * 搜索人脸 (1:N)
  */
 - (NSDictionary * _Nullable)faceDBSearchTop1:(NSData *)featureData threshold:(float)threshold {
-    @synchronized (self) {
+    @synchronized (self.recognitionEngine) {
         if (!self.inited || !featureData.length) return nil;
 
         ASF_FaceFeature feature = {0};
@@ -761,10 +972,10 @@
         MFloat confidence = 0.0f;
 
         // 1:N 搜索
-        MRESULT mr = [self.engine searchFaceFeatureWithFeature:&feature
-                                             compareModel:ASF_LIFE_PHOTO
-                                               similarity:&confidence
-                                          faceFeatureInfo:&resultInfo];
+        MRESULT mr = [self.recognitionEngine searchFaceFeatureWithFeature:&feature
+                                                              compareModel:ASF_LIFE_PHOTO
+                                                                similarity:&confidence
+                                                           faceFeatureInfo:&resultInfo];
 
         if (mr == MOK && confidence >= threshold) {
             // 反查 userId

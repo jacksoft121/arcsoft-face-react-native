@@ -62,6 +62,15 @@ NS_ASSUME_NONNULL_BEGIN
                                orient:(int)orient
                          faceDataInfo:(nullable NSData *)faceDataInfo;
 
+/// 使用独立 IMAGE+识别引擎完成一次特征提取和 SDK 内建 1:N Top1 搜索。
+/// @return 命中时返回 { id, score, featureBase64? }，未命中或提取失败返回 nil。
+- (nullable NSDictionary *)recognizeFace:(ASVLOFFSCREEN *)offscreen
+                                faceRect:(MRECT)rect
+                                  orient:(int)orient
+                            faceDataInfo:(nullable NSData *)faceDataInfo
+                               threshold:(float)threshold
+                     returnFeatureBase64:(BOOL)returnFeatureBase64;
+
 /// 提取人脸特征 (图片)
 /// @param image UIImage 对象
 /// @param faceInfo 人脸信息字典
@@ -139,6 +148,17 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// 清理不在画面中的人脸状态
 - (void)cleanUpFaceStates:(NSArray<NSDictionary *> *)currentFaces;
+
+/// 原子申请一次后台识别；返回负数表示无需或暂不能处理。
+- (NSInteger)tryBeginFaceRecognition:(int)faceId maxRetryCount:(int)maxRetryCount;
+
+/// 在 traceID 和缓存代次仍有效时发布后台识别结果。
+- (void)completeFaceRecognition:(int)faceId
+                     generation:(NSInteger)generation
+                          result:(nullable NSDictionary *)result;
+
+/// 后台有界队列拒绝任务时撤销占位。
+- (void)cancelFaceRecognition:(int)faceId generation:(NSInteger)generation;
 
 @end
 

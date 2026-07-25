@@ -252,7 +252,9 @@ public class ArcsoftFaceModule extends ReactContextBaseJavaModule {
 
       int code = engineManager.initEngine(
               detectMode,
-              DetectFaceOrientPriority.ASF_OP_ALL_OUT,
+              // VisionCamera 已按设备方向物理旋转分析帧；只检测 0° 可避免
+              // ArcSoft 对同一帧重复跑四个方向，官方也建议固定场景使用单角度。
+              DetectFaceOrientPriority.ASF_OP_0_ONLY,
               maxFaceNum,
               combinedMask
       );
